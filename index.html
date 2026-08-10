@@ -130,22 +130,29 @@ let insertRoleSelection = 'sender';
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
 
+// ---------------- state persistence (Netlify Blobs via serverless function) ----------------
 async function loadState(){
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) state = Object.assign({}, DEFAULT_STATE, JSON.parse(raw));
-    else {
-      // migrate from v1 if present
-      const old = localStorage.getItem('dispatch-state-v1');
-      if (old) state = Object.assign({}, DEFAULT_STATE, JSON.parse(old));
-    }
-  } catch (e) {}
+    const resp = await fetch('/.netlify/functions/state');
+    const data = await resp.json();
+    if (data) state = Object.assign({}, DEFAULT_STATE, data);
+  } catch (e) {
+    console.error('load failed, starting fresh', e);
+  }
   if (!state.folders) state.folders = [];
   render();
 }
 async function saveState(){
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch(e){ console.error('save failed', e); }
+  try {
+    await fetch('/.netlify/functions/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    });
+  } catch(e){
+    console.error('save failed', e);
+    showToast('Save failed — check your connection');
+  }
 }
 function showToast(msg){ toast = msg; render(); setTimeout(()=>{ toast=''; render(); }, 1800); }
 
