@@ -212,6 +212,11 @@ function migratePeopleIntoMembers(){
 }
 
 // ---------------- state persistence (Netlify Blobs via serverless function) ----------------
+// loadOk gates every write. If the initial load did not succeed, we must never
+// save — otherwise an empty default state would overwrite real data on the server.
+let loadOk = false;
+let loadErrorMessage = '';
+
 async function loadState(){
   try {
     const resp = await fetch('/.netlify/functions/state', { headers: authHeaders() });
@@ -226,13 +231,18 @@ async function loadState(){
       lockError = passcode ? 'That passcode did not work.' : '';
       render(); return;
     }
-    if (!resp.ok) throw new Error('Load failed (' + resp.status + ')');
+    if (!resp.ok) throw new Error('The server returned an error (' + resp.status + ')');
 
     const data = await resp.json();
     if (data) state = Object.assign({}, DEFAULT_STATE, data);
     locked = false; lockError = ''; setupMessage = '';
+    loadOk = true; loadErrorMessage = '';
   } catch (e) {
-    console.error('load failed, starting fresh', e);
+    loadOk = false;
+    loadErrorMessage = e.message || 'Could not reach the server.';
+    console.error('load failed', e);
+    render();
+    return;
   }
   if (!state.folders) state.folders = [];
   if (!state.categories) state.categories = [];
@@ -249,6 +259,10 @@ async function loadState(){
   render();
 }
 async function saveState(){
+  if (!loadOk) {
+    showToast('Not saved — your data has not loaded yet');
+    return;
+  }
   try {
     const resp = await fetch('/.netlify/functions/state', {
       method: 'POST',
@@ -307,6 +321,7 @@ function render(){
 
   if (setupMessage) { root.innerHTML = setupView(); return; }
   if (locked) { root.innerHTML = lockView(); attachLockHandlers(); return; }
+  if (!loadOk) { root.innerHTML = loadFailedView(); attachLoadFailedHandlers(); return; }
 
   root.innerHTML = `
     <div class="app">
@@ -316,6 +331,56 @@ function render(){
     ${toast ? `<div class="toast">${toast}</div>` : ''}
   `;
   attachHandlers();
+}
+
+// ---------------- load failure (fail closed) ----------------
+function readLegacyLocalState(){
+  try {
+    const raw = localStorage.getItem('dispatch-state-v2');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch(e){ return null; }
+}
+
+function loadFailedView(){
+  const legacy = readLegacyLocalState();
+  const legacyTemplates = legacy && Array.isArray(legacy.templates) ? legacy.templates.length : 0;
+  return centeredShell(`
+    <label class="section">Couldn't load your data</label>
+    <p class="subtle" style="margin:8px 0 10px; font-size:13.5px;">${escapeHtml(loadErrorMessage)}</p>
+    <p class="hint" style="margin:0 0 12px;">Nothing has been saved or changed. Your data on the server is untouched — this screen deliberately blocks the app so it can't be overwritten.</p>
+    <button data-retry-load class="btn btn-primary btn-block" style="margin-bottom:8px;">Try again</button>
+    ${legacyTemplates ? `
+      <div style="border-top:1px solid var(--border); margin-top:12px; padding-top:12px;">
+        <p class="hint" style="margin:0 0 8px;">This browser has older saved data with <strong>${legacyTemplates} template${legacyTemplates===1?'':'s'}</strong> in it. You can download it as a backup file now.</p>
+        <button data-download-legacy class="btn btn-ghost btn-block">Download that backup</button>
+      </div>
+    ` : ''}
+  `);
+}
+
+function attachLoadFailedHandlers(){
+  const retry = document.querySelector('[data-retry-load]');
+  if (retry) retry.onclick = () => { loadErrorMessage = 'Retrying…'; render(); loadState(); };
+
+  const dl = document.querySelector('[data-download-legacy]');
+  if (dl) dl.onclick = () => {
+    const legacy = readLegacyLocalState();
+    if (!legacy) return;
+    downloadJson(legacy, 'dispatch-backup-from-browser.json');
+  };
+}
+
+function downloadJson(obj, filename){
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
 }
 
 // ---------------- lock screen ----------------
@@ -984,15 +1049,77 @@ function computeBulkPreview(text){
 
 // ---------------- Sender ----------------
 function viewSender(){
+  const legacy = readLegacyLocalState();
+  const legacyTemplates = legacy && Array.isArray(legacy.templates) ? legacy.templates.length : 0;
   return `
     <div class="page-header"><div class="page-title">Sender</div></div>
-    <div class="card" style="max-width:400px;">
+    <div class="card" style="max-width:400px; margin-bottom:16px;">
       <div style="width:34px;height:34px;border-radius:50%;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;margin-bottom:10px;">${icon('user',17)}</div>
       <div class="field"><label class="section">Your name</label><input id="sender-name" value="${escapeAttr(state.sender.name)}" /></div>
       <div class="field"><label class="section">Your email</label><input id="sender-email" value="${escapeAttr(state.sender.email)}" /></div>
       <button data-save-sender class="btn btn-primary" style="padding:8px 16px;">Save</button>
     </div>
+
+    <div class="card" style="max-width:400px;">
+      <label class="section">Backup</label>
+      <p class="hint" style="margin:4px 0 10px;">Download everything — templates, members, tasks, counts — as a file you can keep. Worth doing before any big change.</p>
+      <button data-download-backup class="btn btn-ghost btn-block" style="margin-bottom:10px;">Download backup file</button>
+
+      <p class="hint" style="margin:10px 0 8px;">Restore from a backup file. This merges in templates and members that aren't already here — it won't delete anything you currently have.</p>
+      <input type="file" id="restore-file" accept="application/json" style="margin-bottom:8px;" />
+      <button data-restore-backup class="btn btn-ghost btn-block">Restore from file</button>
+
+      ${legacyTemplates ? `
+        <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:12px;">
+          <p class="hint" style="margin:0 0 8px;">This browser still has older locally-saved data containing <strong>${legacyTemplates} template${legacyTemplates===1?'':'s'}</strong>.</p>
+          <button data-recover-legacy class="btn btn-primary btn-block">Recover those ${legacyTemplates} template${legacyTemplates===1?'':'s'}</button>
+        </div>
+      ` : ''}
+    </div>
   `;
+}
+
+function mergeIntoState(incoming){
+  let addedTemplates = 0, addedMembers = 0;
+  if (Array.isArray(incoming.templates)) {
+    incoming.templates.forEach(t => {
+      if (!t || !t.title) return;
+      const exists = state.templates.some(x => x.id === t.id || (x.title === t.title && x.body === t.body));
+      if (exists) return;
+      const copy = Object.assign({}, t);
+      if (!copy.id) copy.id = uid('tpl');
+      if (!Array.isArray(copy.tags)) copy.tags = [];
+      if (copy.subject === undefined) copy.subject = '';
+      if (!Array.isArray(copy.requiredRoleIds)) copy.requiredRoleIds = [];
+      state.templates.push(copy);
+      addedTemplates++;
+    });
+  }
+  if (incoming.members && typeof incoming.members === 'object') {
+    Object.values(incoming.members).forEach(m => {
+      if (!m || !m.id) return;
+      if (state.members[m.id]) return;
+      state.members[m.id] = Object.assign(blankMember(m.id), m);
+      addedMembers++;
+    });
+  }
+  if (incoming.people && typeof incoming.people === 'object') {
+    Object.keys(incoming.people).forEach(roleId => {
+      (incoming.people[roleId] || []).forEach(rec => {
+        const id = (rec.id||'').trim();
+        if (!id || state.members[id]) return;
+        state.members[id] = Object.assign(blankMember(id), { firstName: rec.firstName||'', lastName: rec.lastName||'', email: rec.email||'' });
+        addedMembers++;
+      });
+    });
+  }
+  if (Array.isArray(incoming.folders)) {
+    incoming.folders.forEach(f => {
+      if (!f || !f.id) return;
+      if (!state.folders.some(x => x.id===f.id || x.name===f.name)) state.folders.push(f);
+    });
+  }
+  return { addedTemplates, addedMembers };
 }
 
 // ---------------- Generate ----------------
@@ -1482,6 +1609,39 @@ function attachHandlers(){
     state.sender.name = document.getElementById('sender-name').value.trim();
     state.sender.email = document.getElementById('sender-email').value.trim();
     saveState(); showToast('Sender info saved');
+  };
+
+  const downloadBackupBtn = document.querySelector('[data-download-backup]');
+  if (downloadBackupBtn) downloadBackupBtn.onclick = () => {
+    const stamp = todayKey();
+    downloadJson(state, `dispatch-backup-${stamp}.json`);
+    showToast('Backup downloaded');
+  };
+
+  const restoreBtn = document.querySelector('[data-restore-backup]');
+  if (restoreBtn) restoreBtn.onclick = () => {
+    const fileInput = document.getElementById('restore-file');
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (!file) { showToast('Pick a backup file first'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      let incoming;
+      try { incoming = JSON.parse(reader.result); }
+      catch(e){ showToast('That file could not be read'); return; }
+      const { addedTemplates, addedMembers } = mergeIntoState(incoming);
+      saveState(); render();
+      showToast(`Restored ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}`);
+    };
+    reader.readAsText(file);
+  };
+
+  const recoverLegacyBtn = document.querySelector('[data-recover-legacy]');
+  if (recoverLegacyBtn) recoverLegacyBtn.onclick = () => {
+    const legacy = readLegacyLocalState();
+    if (!legacy) { showToast('Nothing found to recover'); return; }
+    const { addedTemplates, addedMembers } = mergeIntoState(legacy);
+    saveState(); render();
+    showToast(`Recovered ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}`);
   };
 
   const memberSearchEl = document.getElementById('member-search');
