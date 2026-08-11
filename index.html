@@ -134,6 +134,17 @@ let genError = '';
 let toast = '';
 let insertRoleSelection = 'sender';
 
+// ---------------- access passcode ----------------
+let passcode = '';
+try { passcode = localStorage.getItem('dispatch-key') || ''; } catch(e){}
+let locked = false;
+let lockError = '';
+let setupMessage = '';
+
+function authHeaders(extra){
+  return Object.assign({ 'x-dispatch-key': passcode }, extra || {});
+}
+
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
 
 function todayKey(){
@@ -147,9 +158,23 @@ function todayKey(){
 // ---------------- state persistence (Netlify Blobs via serverless function) ----------------
 async function loadState(){
   try {
-    const resp = await fetch('/.netlify/functions/state');
+    const resp = await fetch('/.netlify/functions/state', { headers: authHeaders() });
+
+    if (resp.status === 503) {
+      const d = await resp.json().catch(()=>({}));
+      setupMessage = d.message || 'Server setup incomplete.';
+      render(); return;
+    }
+    if (resp.status === 401) {
+      locked = true;
+      lockError = passcode ? 'That passcode did not work.' : '';
+      render(); return;
+    }
+    if (!resp.ok) throw new Error('Load failed (' + resp.status + ')');
+
     const data = await resp.json();
     if (data) state = Object.assign({}, DEFAULT_STATE, data);
+    locked = false; lockError = ''; setupMessage = '';
   } catch (e) {
     console.error('load failed, starting fresh', e);
   }
@@ -158,11 +183,13 @@ async function loadState(){
 }
 async function saveState(){
   try {
-    await fetch('/.netlify/functions/state', {
+    const resp = await fetch('/.netlify/functions/state', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(state),
     });
+    if (resp.status === 401) { locked = true; lockError = 'Your session was locked. Enter the passcode to continue.'; render(); return; }
+    if (!resp.ok) throw new Error('Save failed (' + resp.status + ')');
   } catch(e){
     console.error('save failed', e);
     showToast('Save failed — check your connection');
@@ -209,6 +236,10 @@ function icon(name, size){
 // ---------------- render ----------------
 function render(){
   const root = document.getElementById('root');
+
+  if (setupMessage) { root.innerHTML = setupView(); return; }
+  if (locked) { root.innerHTML = lockView(); attachLockHandlers(); return; }
+
   root.innerHTML = `
     <div class="app">
       ${sidebarHtml()}
@@ -217,6 +248,55 @@ function render(){
     ${toast ? `<div class="toast">${toast}</div>` : ''}
   `;
   attachHandlers();
+}
+
+// ---------------- lock screen ----------------
+function centeredShell(inner){
+  return `
+    <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;">
+      <div class="card" style="max-width:400px; width:100%;">
+        <div class="logo-row" style="margin-bottom:14px;">
+          <div class="logo-mark">${icon('sparkle',15)}</div><div class="logo-text">Dispatch</div>
+        </div>
+        ${inner}
+      </div>
+    </div>
+  `;
+}
+
+function lockView(){
+  return centeredShell(`
+    <label class="section">Passcode</label>
+    <input id="lock-key" type="password" autocomplete="current-password" placeholder="Enter passcode" style="margin:8px 0 10px;" />
+    ${lockError ? `<p style="color:#D0453A; font-size:13.5px; margin:0 0 10px;">${escapeHtml(lockError)}</p>` : ''}
+    <button data-unlock class="btn btn-primary btn-block">Unlock</button>
+    <p class="hint" style="margin-top:12px;">This protects the member information stored in Dispatch.</p>
+  `);
+}
+
+function setupView(){
+  return centeredShell(`
+    <label class="section">Setup needed</label>
+    <p class="subtle" style="margin:8px 0 0; font-size:13.5px;">${escapeHtml(setupMessage)}</p>
+  `);
+}
+
+function attachLockHandlers(){
+  const input = document.getElementById('lock-key');
+  const submit = () => {
+    if (!input) return;
+    passcode = input.value.trim();
+    if (!passcode) return;
+    try { localStorage.setItem('dispatch-key', passcode); } catch(e){}
+    lockError = '';
+    loadState();
+  };
+  const btn = document.querySelector('[data-unlock]');
+  if (btn) btn.onclick = submit;
+  if (input) {
+    input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+    input.focus();
+  }
 }
 
 function sidebarHtml(){
@@ -644,7 +724,7 @@ function buildFilledBody(t){
 async function translateText(text, targetLang){
   const resp = await fetch("/.netlify/functions/translate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ text, targetLang })
   });
   const data = await resp.json().catch(() => ({}));
