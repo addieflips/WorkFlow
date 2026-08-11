@@ -133,7 +133,8 @@ const DEFAULT_STATE = {
     { id: 'r_sponsor', label: 'Proposed Sponsor', locked: true },
   ],
   templates: [],
-  people: {},
+  people: {},        // legacy per-role directory — kept for data safety, no longer written to
+  members: {},        // { [memberId]: { id, firstName, lastName, email, phone, country, sponsor, enroller, notes } }
   folders: [],
   lastLanguage: 'English (no translation)',
   categories: [
@@ -152,10 +153,12 @@ let generatingTemplateId = null;
 let genFieldValues = {};
 let genLanguage = 'English (no translation)';
 let genOutput = '';
+let genSubject = '';
 let genLoading = false;
 let genError = '';
 let toast = '';
 let insertRoleSelection = 'sender';
+let insertTargetId = 'tpl-body'; // 'tpl-body' or 'tpl-subject'
 
 // ---------------- access passcode ----------------
 let passcode = '';
@@ -176,6 +179,28 @@ function todayKey(){
   const mm = String(d.getMonth()+1).padStart(2,'0');
   const dd = String(d.getDate()).padStart(2,'0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function blankMember(id){
+  return { id, firstName:'', lastName:'', email:'', phone:'', country:'', sponsor:'', enroller:'', notes:'' };
+}
+
+// One-time-safe merge: folds the legacy per-role people[] lists into the single
+// ID-keyed members directory. Never overwrites a field that's already populated,
+// and never deletes state.people — this can run on every load with no data loss.
+function migratePeopleIntoMembers(){
+  if (!state.people) return;
+  Object.keys(state.people).forEach(roleId => {
+    (state.people[roleId] || []).forEach(rec => {
+      const id = (rec.id || '').trim();
+      if (!id) return;
+      if (!state.members[id]) state.members[id] = blankMember(id);
+      const m = state.members[id];
+      if (!m.firstName && rec.firstName) m.firstName = rec.firstName;
+      if (!m.lastName && rec.lastName) m.lastName = rec.lastName;
+      if (!m.email && rec.email) m.email = rec.email;
+    });
+  });
 }
 
 // ---------------- state persistence (Netlify Blobs via serverless function) ----------------
@@ -206,6 +231,8 @@ async function loadState(){
   state.categories.forEach(c => ensureCategoryDefaults(c));
   if (!state.tasks) state.tasks = [];
   state.tasks.forEach(t => { if (t.categoryId === undefined) t.categoryId = null; });
+  if (!state.members) state.members = {};
+  migratePeopleIntoMembers();
   render();
 }
 async function saveState(){
@@ -343,6 +370,7 @@ function sidebarHtml(){
       }).join('')}
 
       <div class="nav-bottom">
+        <div data-nav="members" class="nav-item ${view==='members'?'active':''}">${icon('idcard',15)}<span class="lbl">Members</span></div>
         <div data-nav="roles" class="nav-item ${view==='roles'?'active':''}">${icon('users',15)}<span class="lbl">Roles</span></div>
         <div data-nav="sender" class="nav-item ${view==='sender'?'active':''}">${icon('user',15)}<span class="lbl">Sender</span></div>
       </div>
@@ -355,6 +383,7 @@ function mainBody(){
   if (view === 'categories') return viewCategories();
   if (view === 'templates') return viewTemplates();
   if (view === 'editor') return viewEditor();
+  if (view === 'members') return viewMembers();
   if (view === 'roles') return viewRoles();
   if (view === 'sender') return viewSender();
   if (view === 'generate') return viewGenerate();
@@ -578,8 +607,8 @@ function viewEditor(){
       </div>
 
       <div class="field">
-        <label class="section">Insert into body</label>
-        <p class="hint" style="margin:0 0 8px;">1. Pick who it's for below, then 2. tap what to insert.</p>
+        <label class="section">Insert placeholder</label>
+        <p class="hint" style="margin:0 0 8px;">1. Pick who it's for, then 2. tap what to insert. It drops into whichever field you last clicked — Subject or Body.</p>
         <div class="insert-row" style="margin-bottom:8px;">
           <select id="tpl-insert-role">
             ${insertOptions.map(o => `<option value="${o.id}" ${insertRoleSelection===o.id?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}
@@ -592,6 +621,11 @@ function viewEditor(){
           <button data-insert-kind="email" class="btn btn-ghost" style="padding:6px 11px; font-size:12.5px;">${icon('mail',13)} Email</button>
           <button data-insert-kind="id" class="btn btn-ghost" style="padding:6px 11px; font-size:12.5px;">${icon('idcard',13)} Member ID</button>
         </div>
+      </div>
+
+      <div class="field">
+        <label class="section">Subject</label>
+        <input id="tpl-subject" value="${escapeAttr(t.subject || '')}" placeholder="Account transfer request for {{Moving Member Name}}" />
       </div>
 
       <div class="field">
@@ -609,7 +643,7 @@ function viewEditor(){
 }
 
 function newTemplateDraft(){
-  return { id: null, title: '', body: '', requiredRoleIds: [], recipientRoleId: '', signerSource: 'sender', folderId: selectedFolderId || '' };
+  return { id: null, title: '', subject: '', body: '', requiredRoleIds: [], recipientRoleId: '', signerSource: 'sender', folderId: selectedFolderId || '' };
 }
 
 // ---------------- Roles ----------------
@@ -630,6 +664,151 @@ function viewRoles(){
       </div>
     </div>
   `;
+}
+
+// ---------------- Members ----------------
+let memberSearchQuery = '';
+let editingMemberId = null; // null = closed; 'new' = adding; existing id = editing
+let memberDraft = null;
+let bulkImportOpen = false;
+let bulkImportText = '';
+let bulkPreview = null; // { newRecords:[], skipped:[], invalid:[] }
+
+function viewMembers(){
+  const q = memberSearchQuery.trim().toLowerCase();
+  const list = Object.values(state.members || {}).filter(m => {
+    if (!q) return true;
+    return [m.id, m.firstName, m.lastName, m.email, m.phone].some(v => (v||'').toLowerCase().includes(q));
+  }).sort((a,b) => (a.lastName||'').localeCompare(b.lastName||'') || (a.firstName||'').localeCompare(b.firstName||''));
+
+  return `
+    <div class="page-header">
+      <div class="page-title">Members</div>
+      <div style="display:flex; gap:8px;">
+        <button data-open-bulk-import class="btn btn-ghost" style="padding:8px 14px;">${icon('folder',15)} Bulk import</button>
+        <button data-open-add-member class="btn btn-primary" style="padding:8px 14px;">${icon('plus',15)} Add member</button>
+      </div>
+    </div>
+
+    <div class="field" style="max-width:340px;">
+      <input id="member-search" placeholder="Search by ID, name, email, phone" value="${escapeAttr(memberSearchQuery)}" />
+    </div>
+
+    ${bulkImportOpen ? bulkImportPanel() : ''}
+    ${editingMemberId ? memberFormPanel() : ''}
+
+    ${list.length===0 ? `
+      <div class="card empty">
+        <div class="empty-icon">${icon('users',20)}</div>
+        <div>No members ${q ? 'match your search' : 'yet'}.</div>
+      </div>
+    ` : `
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${list.map(m => memberRow(m)).join('')}
+      </div>
+    `}
+  `;
+}
+
+function memberRow(m){
+  return `
+    <div class="card" style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px;">
+      <div>
+        <div style="font-weight:600; font-size:14px;">${escapeHtml(m.firstName)} ${escapeHtml(m.lastName)} <span class="subtle" style="font-weight:400;">#${escapeHtml(m.id)}</span></div>
+        <div class="subtle" style="font-size:12.5px; margin-top:2px;">${escapeHtml(m.email||'')}${m.email && m.phone ? ' · ' : ''}${escapeHtml(m.phone||'')}</div>
+      </div>
+      <div style="display:flex; gap:6px; flex-shrink:0;">
+        <button data-edit-member="${m.id}" class="icon-btn" title="Edit">${icon('pencil',15)}</button>
+        <button data-delete-member="${m.id}" class="icon-btn danger" title="Delete">${icon('trash',15)}</button>
+      </div>
+    </div>
+  `;
+}
+
+function memberFormPanel(){
+  const d = memberDraft || blankMember('');
+  const isNew = editingMemberId === 'new';
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:560px;">
+      <label class="section">${isNew ? 'Add member' : 'Edit member'}</label>
+      <div class="row2 field">
+        <div><label class="hint">Member ID *</label><input id="mf-id" value="${escapeAttr(d.id)}" ${isNew ? '' : 'disabled'} /></div>
+        <div></div>
+      </div>
+      <div class="row2 field">
+        <div><label class="hint">First name *</label><input id="mf-first" value="${escapeAttr(d.firstName)}" /></div>
+        <div><label class="hint">Last name *</label><input id="mf-last" value="${escapeAttr(d.lastName)}" /></div>
+      </div>
+      <div class="row2 field">
+        <div><label class="hint">Email</label><input id="mf-email" value="${escapeAttr(d.email)}" /></div>
+        <div><label class="hint">Phone</label><input id="mf-phone" value="${escapeAttr(d.phone)}" /></div>
+      </div>
+      <div class="row2 field">
+        <div><label class="hint">Country</label><input id="mf-country" value="${escapeAttr(d.country)}" /></div>
+        <div><label class="hint">Sponsor</label><input id="mf-sponsor" value="${escapeAttr(d.sponsor)}" /></div>
+      </div>
+      <div class="field"><label class="hint">Enroller</label><input id="mf-enroller" value="${escapeAttr(d.enroller)}" /></div>
+      <div class="field"><label class="hint">Notes</label><textarea id="mf-notes" rows="2">${escapeHtml(d.notes)}</textarea></div>
+      <div style="display:flex; gap:8px;">
+        <button data-save-member class="btn btn-primary" style="padding:8px 16px;">Save</button>
+        <button data-cancel-member class="btn btn-ghost" style="padding:8px 16px;">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function bulkImportPanel(){
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:560px;">
+      <label class="section">Bulk import members</label>
+      <p class="hint" style="margin:4px 0 8px;">One per line — "First Last 123456" or "Last, First 123456". The trailing number is the Member ID.</p>
+      <textarea id="bulk-import-text" rows="6" placeholder="Maria Rodriguez 48213&#10;Johnson, Mary 91027">${escapeHtml(bulkImportText)}</textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button data-preview-bulk class="btn btn-ghost" style="padding:8px 16px;">Preview</button>
+        ${bulkPreview ? `<button data-confirm-bulk class="btn btn-primary" style="padding:8px 16px;">Import ${bulkPreview.newRecords.length} new</button>` : ''}
+        <button data-cancel-bulk class="btn btn-ghost" style="padding:8px 16px;">Cancel</button>
+      </div>
+      ${bulkPreview ? `
+        <p class="hint" style="margin-top:10px;">
+          <strong>${bulkPreview.newRecords.length}</strong> new · <strong>${bulkPreview.skipped.length}</strong> skipped (already exist)${bulkPreview.invalid.length ? ` · <strong>${bulkPreview.invalid.length}</strong> couldn't be read` : ''}
+        </p>
+      ` : ''}
+    </div>
+  `;
+}
+
+function parseNameParts(raw){
+  raw = raw.trim();
+  if (raw.includes(',')) {
+    const idx = raw.indexOf(',');
+    return { firstName: raw.slice(idx+1).trim(), lastName: raw.slice(0, idx).trim() };
+  }
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  return { firstName: tokens[0] || '', lastName: tokens.slice(1).join(' ') };
+}
+
+function parseBulkImportLine(line){
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const m = trimmed.match(/^(.*?)(\d+)\s*$/);
+  if (!m || !m[1].trim()) return { invalid: true };
+  const { firstName, lastName } = parseNameParts(m[1]);
+  if (!firstName) return { invalid: true };
+  return { id: m[2], firstName, lastName };
+}
+
+function computeBulkPreview(text){
+  const newRecords = [], skipped = [], invalid = [];
+  const seen = {};
+  text.split('\n').forEach(line => {
+    if (!line.trim()) return;
+    const parsed = parseBulkImportLine(line);
+    if (!parsed || parsed.invalid) { invalid.push(line); return; }
+    if (state.members[parsed.id] || seen[parsed.id]) { skipped.push(parsed.id); return; }
+    seen[parsed.id] = true;
+    newRecords.push(parsed);
+  });
+  return { newRecords, skipped, invalid };
 }
 
 // ---------------- Sender ----------------
@@ -691,8 +870,17 @@ function viewGenerate(){
       <div class="card">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
           <label class="section" style="margin:0;">Output</label>
-          ${genOutput ? `<button data-copy-output class="icon-btn" title="Copy">${icon('copy',14)}</button>` : ''}
+          ${genOutput ? `<button data-copy-output class="icon-btn" title="Copy subject and body">${icon('copy',14)}</button>` : ''}
         </div>
+        ${genSubject ? `
+          <div style="border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:10px; display:flex; align-items:flex-start; gap:8px;">
+            <div style="flex:1;">
+              <div class="hint" style="margin:0 0 2px;">Subject</div>
+              <div style="font-size:13.5px; font-weight:600;">${escapeHtml(genSubject)}</div>
+            </div>
+            <button data-copy-subject class="icon-btn" title="Copy subject only" style="width:26px;height:26px;flex-shrink:0;">${icon('copy',12)}</button>
+          </div>
+        ` : ''}
         <div class="output-box">${genOutput ? escapeHtml(genOutput) : '<span class="subtle">Fill in the fields, then hit Generate.</span>'}</div>
       </div>
     </div>
@@ -710,14 +898,13 @@ function maybeParseCommaName(roleId){
     }
   });
 }
-function lookupPersonById(roleId, id){
+function lookupPersonById(id){
   if (!id) return null;
-  const list = (state.people && state.people[roleId]) || [];
-  return list.find(p => p.id === id) || null;
+  return (state.members && state.members[id]) || null;
 }
 function applyPersonLookup(roleId){
   const id = (genFieldValues[roleId+'_memberid'] || '').trim();
-  const match = lookupPersonById(roleId, id);
+  const match = lookupPersonById(id);
   if (match) {
     genFieldValues[roleId+'_firstname'] = match.firstName;
     genFieldValues[roleId+'_lastname'] = match.lastName;
@@ -726,26 +913,27 @@ function applyPersonLookup(roleId){
   }
 }
 function savePeopleFromGenFields(t){
-  state.people = state.people || {};
+  state.members = state.members || {};
   t.requiredRoleIds.forEach(roleId => {
     const id = (genFieldValues[roleId+'_memberid'] || '').trim();
     if (!id) return;
-    const record = { id, firstName: genFieldValues[roleId+'_firstname']||'', lastName: genFieldValues[roleId+'_lastname']||'', email: genFieldValues[roleId+'_email']||'' };
-    if (!state.people[roleId]) state.people[roleId] = [];
-    const idx = state.people[roleId].findIndex(p => p.id === id);
-    if (idx >= 0) state.people[roleId][idx] = record; else state.people[roleId].push(record);
+    const existing = state.members[id] || blankMember(id);
+    state.members[id] = Object.assign({}, existing, {
+      id,
+      firstName: genFieldValues[roleId+'_firstname'] || existing.firstName || '',
+      lastName: genFieldValues[roleId+'_lastname'] || existing.lastName || '',
+      email: genFieldValues[roleId+'_email'] || existing.email || '',
+    });
   });
   saveState();
 }
 
-function buildFilledBody(t){
-  let body = t.body || '';
+function fillTokens(text, t){
+  let out = text || '';
   const senderName = genFieldValues.__sender_name ?? state.sender.name ?? '';
   const senderEmail = genFieldValues.__sender_email ?? state.sender.email ?? '';
-  body = body.split('{{Sender Name}}').join(senderName);
-  body = body.split('{{Sender Email}}').join(senderEmail);
-
-  const roleData = {};
+  out = out.split('{{Sender Name}}').join(senderName);
+  out = out.split('{{Sender Email}}').join(senderEmail);
   t.requiredRoleIds.forEach(id => {
     const r = state.roles.find(x=>x.id===id);
     if (!r) return;
@@ -754,13 +942,37 @@ function buildFilledBody(t){
     const email = genFieldValues[id+'_email'] || '';
     const memberId = genFieldValues[id+'_memberid'] || '';
     const fullName = [firstName, lastName].filter(Boolean).join(' ');
-    roleData[id] = { name: fullName, firstName, lastName, email, memberId, label: r.label };
-    body = body.split(nameToken(r.label)).join(fullName);
-    body = body.split(firstNameToken(r.label)).join(firstName);
-    body = body.split(lastNameToken(r.label)).join(lastName);
-    body = body.split(emailToken(r.label)).join(email);
-    body = body.split(idToken(r.label)).join(memberId);
+    out = out.split(nameToken(r.label)).join(fullName);
+    out = out.split(firstNameToken(r.label)).join(firstName);
+    out = out.split(lastNameToken(r.label)).join(lastName);
+    out = out.split(emailToken(r.label)).join(email);
+    out = out.split(idToken(r.label)).join(memberId);
   });
+  return out;
+}
+
+function roleDataFor(t){
+  const roleData = {};
+  t.requiredRoleIds.forEach(id => {
+    const r = state.roles.find(x=>x.id===id);
+    if (!r) return;
+    const firstName = genFieldValues[id+'_firstname'] || '';
+    const lastName = genFieldValues[id+'_lastname'] || '';
+    const email = genFieldValues[id+'_email'] || '';
+    roleData[id] = { name: [firstName, lastName].filter(Boolean).join(' '), email, label: r.label };
+  });
+  return roleData;
+}
+
+function buildFilledSubject(t){
+  return fillTokens(t.subject || '', t);
+}
+
+function buildFilledBody(t){
+  const senderName = genFieldValues.__sender_name ?? state.sender.name ?? '';
+  const senderEmail = genFieldValues.__sender_email ?? state.sender.email ?? '';
+  const body = fillTokens(t.body || '', t);
+  const roleData = roleDataFor(t);
 
   let greeting = '';
   if (t.recipientRoleId && roleData[t.recipientRoleId]) greeting = `Hello ${roleData[t.recipientRoleId].name || '[name]'},\n\n`;
@@ -789,11 +1001,24 @@ async function runGenerate(){
   if (!t) return;
   genError = '';
   savePeopleFromGenFields(t);
-  const filled = buildFilledBody(t);
-  if (genLanguage === 'English (no translation)') { genOutput = filled; render(); return; }
-  genLoading = true; genOutput = ''; render();
-  try { genOutput = await translateText(filled, genLanguage); }
-  catch (e) { genError = 'Translation failed — showing the English version instead. ' + (e.message || ''); genOutput = filled; }
+  const filledSubject = buildFilledSubject(t);
+  const filledBody = buildFilledBody(t);
+
+  if (genLanguage === 'English (no translation)') {
+    genSubject = filledSubject; genOutput = filledBody; render(); return;
+  }
+
+  genLoading = true; genOutput = ''; genSubject = ''; render();
+  try {
+    const [subjectOut, bodyOut] = await Promise.all([
+      filledSubject.trim() ? translateText(filledSubject, genLanguage) : Promise.resolve(''),
+      translateText(filledBody, genLanguage),
+    ]);
+    genSubject = subjectOut; genOutput = bodyOut;
+  } catch (e) {
+    genError = 'Translation failed — showing the English version instead. ' + (e.message || '');
+    genSubject = filledSubject; genOutput = filledBody;
+  }
   genLoading = false; render();
 }
 
@@ -935,7 +1160,7 @@ function attachHandlers(){
 
   document.querySelectorAll('[data-generate]').forEach(el => el.onclick = () => {
     generatingTemplateId = el.getAttribute('data-generate');
-    genFieldValues = {}; genOutput=''; genError=''; genLanguage = state.lastLanguage || 'English (no translation)';
+    genFieldValues = {}; genOutput=''; genSubject=''; genError=''; genLanguage = state.lastLanguage || 'English (no translation)';
     view='generate'; render();
   });
 
@@ -964,11 +1189,16 @@ function attachHandlers(){
       if (!r) return;
       token = kind==='name' ? nameToken(r.label) : kind==='first' ? firstNameToken(r.label) : kind==='last' ? lastNameToken(r.label) : kind==='email' ? emailToken(r.label) : idToken(r.label);
     }
-    const ta = document.getElementById('tpl-body');
-    if (ta) { insertAtCursor(ta, token); syncEditorDraftFromDom(); }
+    const target = document.getElementById(insertTargetId) || document.getElementById('tpl-body');
+    if (target) { insertAtCursor(target, token); syncEditorDraftFromDom(); }
   });
 
-  ['tpl-title','tpl-body','tpl-recipient','tpl-signer','tpl-folder'].forEach(id => {
+  ['tpl-subject','tpl-body'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.onfocus = () => { insertTargetId = id; };
+  });
+
+  ['tpl-title','tpl-subject','tpl-body','tpl-recipient','tpl-signer','tpl-folder'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.oninput = () => syncEditorDraftFromDom();
   });
@@ -1026,6 +1256,85 @@ function attachHandlers(){
     saveState(); showToast('Sender info saved');
   };
 
+  const memberSearchEl = document.getElementById('member-search');
+  if (memberSearchEl) memberSearchEl.oninput = () => {
+    memberSearchQuery = memberSearchEl.value;
+    const cursorPos = memberSearchEl.selectionStart;
+    render();
+    const refocused = document.getElementById('member-search');
+    if (refocused) { refocused.focus(); refocused.setSelectionRange(cursorPos, cursorPos); }
+  };
+
+  const openAddMemberBtn = document.querySelector('[data-open-add-member]');
+  if (openAddMemberBtn) openAddMemberBtn.onclick = () => {
+    editingMemberId = 'new'; memberDraft = blankMember(''); bulkImportOpen = false; bulkPreview = null; render();
+  };
+
+  const openBulkImportBtn = document.querySelector('[data-open-bulk-import]');
+  if (openBulkImportBtn) openBulkImportBtn.onclick = () => {
+    bulkImportOpen = !bulkImportOpen; editingMemberId = null; memberDraft = null; bulkPreview = null; render();
+  };
+
+  document.querySelectorAll('[data-edit-member]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-edit-member');
+    const m = state.members[id];
+    if (!m) return;
+    editingMemberId = id; memberDraft = Object.assign({}, m); bulkImportOpen = false; render();
+  });
+
+  document.querySelectorAll('[data-delete-member]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-delete-member');
+    if (!confirm('Delete this member? This cannot be undone.')) return;
+    delete state.members[id];
+    saveState(); render();
+  });
+
+  const saveMemberBtn = document.querySelector('[data-save-member]');
+  if (saveMemberBtn) saveMemberBtn.onclick = () => {
+    const isNew = editingMemberId === 'new';
+    const id = document.getElementById('mf-id').value.trim();
+    const firstName = document.getElementById('mf-first').value.trim();
+    const lastName = document.getElementById('mf-last').value.trim();
+    if (!id || !firstName || !lastName) { showToast('Member ID, first and last name are required'); return; }
+    if (isNew && state.members[id]) { showToast('That Member ID already exists — edit it instead'); return; }
+    const record = {
+      id,
+      firstName, lastName,
+      email: document.getElementById('mf-email').value.trim(),
+      phone: document.getElementById('mf-phone').value.trim(),
+      country: document.getElementById('mf-country').value.trim(),
+      sponsor: document.getElementById('mf-sponsor').value.trim(),
+      enroller: document.getElementById('mf-enroller').value.trim(),
+      notes: document.getElementById('mf-notes').value.trim(),
+    };
+    state.members[id] = record;
+    editingMemberId = null; memberDraft = null;
+    saveState(); render(); showToast('Member saved');
+  };
+
+  const cancelMemberBtn = document.querySelector('[data-cancel-member]');
+  if (cancelMemberBtn) cancelMemberBtn.onclick = () => { editingMemberId = null; memberDraft = null; render(); };
+
+  const previewBulkBtn = document.querySelector('[data-preview-bulk]');
+  if (previewBulkBtn) previewBulkBtn.onclick = () => {
+    bulkImportText = document.getElementById('bulk-import-text').value;
+    bulkPreview = computeBulkPreview(bulkImportText);
+    render();
+  };
+
+  const confirmBulkBtn = document.querySelector('[data-confirm-bulk]');
+  if (confirmBulkBtn) confirmBulkBtn.onclick = () => {
+    if (!bulkPreview) return;
+    bulkPreview.newRecords.forEach(r => { state.members[r.id] = blankMember(r.id); state.members[r.id].firstName = r.firstName; state.members[r.id].lastName = r.lastName; });
+    const count = bulkPreview.newRecords.length;
+    saveState();
+    bulkImportOpen = false; bulkImportText = ''; bulkPreview = null;
+    render(); showToast(`${count} member${count===1?'':'s'} imported`);
+  };
+
+  const cancelBulkBtn = document.querySelector('[data-cancel-bulk]');
+  if (cancelBulkBtn) cancelBulkBtn.onclick = () => { bulkImportOpen = false; bulkImportText = ''; bulkPreview = null; render(); };
+
   document.querySelectorAll('[data-gen-field]').forEach(el => el.oninput = () => { genFieldValues[el.getAttribute('data-gen-field')] = el.value; });
   document.querySelectorAll('[data-gen-field]').forEach(el => {
     const key = el.getAttribute('data-gen-field');
@@ -1043,7 +1352,14 @@ function attachHandlers(){
   const runBtn = document.querySelector('[data-run-generate]');
   if (runBtn) runBtn.onclick = runGenerate;
   const copyBtn = document.querySelector('[data-copy-output]');
-  if (copyBtn) copyBtn.onclick = () => { navigator.clipboard.writeText(genOutput).then(()=>showToast('Copied')); };
+  if (copyBtn) copyBtn.onclick = () => {
+    const full = genSubject ? `Subject: ${genSubject}\n\n${genOutput}` : genOutput;
+    navigator.clipboard.writeText(full).then(()=>showToast(genSubject ? 'Subject and body copied' : 'Copied'));
+  };
+  const copySubjectBtn = document.querySelector('[data-copy-subject]');
+  if (copySubjectBtn) copySubjectBtn.onclick = () => {
+    navigator.clipboard.writeText(genSubject).then(()=>showToast('Subject copied'));
+  };
 }
 
 let __editorDraft = null;
@@ -1058,6 +1374,7 @@ function getEditorDraftFromDom(init){
 function syncEditorDraftFromDom(){
   const d = getEditorDraftFromDom();
   d.title = document.getElementById('tpl-title')?.value ?? d.title;
+  d.subject = document.getElementById('tpl-subject')?.value ?? d.subject;
   d.body = document.getElementById('tpl-body')?.value ?? d.body;
   d.recipientRoleId = document.getElementById('tpl-recipient')?.value ?? d.recipientRoleId;
   d.signerSource = document.getElementById('tpl-signer')?.value ?? d.signerSource;
