@@ -39,7 +39,19 @@ exports.handler = async function (event) {
         max_tokens: 1500,
         messages: [{
           role: 'user',
-          content: `Translate the following business email into ${targetLang}. Keep it natural and professional, as a native speaker would write it — do not translate word-for-word. Do NOT translate proper names or email addresses, leave them exactly as written. Preserve paragraph breaks and the overall structure. Return ONLY the translated email text, with no preamble, explanation, or quotation marks.\n\n---\n${text}`,
+          content: `Translate the following business email text into ${targetLang}. Keep it natural and professional, as a native speaker would write it — do not translate word-for-word.
+
+Leave the following EXACTLY as written, untranslated and unchanged:
+- People's names (first, last, or full)
+- Email addresses
+- Member IDs and any other ID numbers
+- Numbers, dates, and amounts
+- Policy names, program names, and rank names
+
+Preserve paragraph breaks and the overall structure. Return ONLY the translated text, with no preamble, explanation, or quotation marks.
+
+---
+${text}`,
         }],
       }),
     });
