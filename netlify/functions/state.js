@@ -2,10 +2,14 @@
 // replacing browser localStorage so data survives across devices/browsers.
 
 const { getStore } = require('@netlify/blobs');
+const { checkAuth } = require('./_auth');
 
 const KEY = 'state';
 
 exports.handler = async function (event) {
+  const denied = checkAuth(event);
+  if (denied) return denied;
+
   const store = getStore('dispatch-state');
 
   if (event.httpMethod === 'GET') {
