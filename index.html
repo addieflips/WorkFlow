@@ -94,6 +94,29 @@
 
   .toast{ position:fixed; top:18px; right:18px; background:var(--ink); color:#fff; padding:9px 16px; border-radius:10px; font-size:13.5px; z-index:50; }
   .output-box{ white-space:pre-wrap; font-size:14px; line-height:1.6; min-height:180px; }
+
+  /* home cards */
+  .dcard{ display:flex; flex-direction:column; }
+  .dcard-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; position:relative; }
+  .dcard-title{ font-size:14px; font-weight:600; }
+  .stat-big{ display:flex; align-items:baseline; gap:6px; margin-bottom:2px; }
+  .stat-big .num{ font-size:27px; font-weight:700; line-height:1; }
+  .stat-big .lbl{ font-size:11.5px; color:var(--muted); }
+  .note-input{ width:100%; height:33px; font-size:13.5px; font-weight:600; margin-bottom:2px; }
+  .count-edit{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+  .count-edit input{ font-size:12.5px; padding:6px 8px; }
+  .dcard-bar{ height:5px; border-radius:3px; background:var(--border); overflow:hidden; margin-bottom:12px; }
+  .dcard-bar-fill{ height:100%; background:var(--primary); }
+  .dcard-tasks{ display:flex; flex-direction:column; gap:5px; margin-bottom:10px; }
+  .card-task-row{ display:flex; align-items:center; gap:7px; font-size:13px; cursor:pointer; }
+  .card-task-row input[type=checkbox]{ width:14px; height:14px; flex-shrink:0; }
+  .card-add-task{ height:30px; font-size:12.5px; margin-top:auto; }
+  .pin-menu{ display:none; position:absolute; top:30px; right:0; background:#fff; border:1px solid var(--border); border-radius:10px; padding:4px; flex-direction:column; min-width:150px; z-index:5; box-shadow:0 4px 14px rgba(32,34,58,.1); }
+  .pin-menu.open{ display:flex; }
+  .pin-menu button{ background:none; border:none; text-align:left; font-size:12.5px; padding:6px 8px; border-radius:6px; cursor:pointer; color:var(--ink); }
+  .pin-menu button:hover{ background:var(--primary-soft); color:var(--primary-dark); }
+  .addcard-tile{ border:1.5px dashed var(--border); border-radius:16px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; color:var(--muted); cursor:pointer; min-height:170px; }
+  .addcard-tile:hover{ color:var(--primary-dark); border-color:var(--primary); }
 </style>
 </head>
 <body>
@@ -114,8 +137,8 @@ const DEFAULT_STATE = {
   folders: [],
   lastLanguage: 'English (no translation)',
   categories: [
-    { id: 'c_emails', label: 'Emails' },
-    { id: 'c_transfers', label: 'Account Transfers' },
+    { id: 'c_emails', label: 'Emails', featuredStat: 'remaining', noteText: '' },
+    { id: 'c_transfers', label: 'Account Transfers', featuredStat: 'remaining', noteText: '' },
   ],
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
   tasks: [],         // { id, text, done, createdDate, completedDate }
@@ -179,6 +202,10 @@ async function loadState(){
     console.error('load failed, starting fresh', e);
   }
   if (!state.folders) state.folders = [];
+  if (!state.categories) state.categories = [];
+  state.categories.forEach(c => ensureCategoryDefaults(c));
+  if (!state.tasks) state.tasks = [];
+  state.tasks.forEach(t => { if (t.categoryId === undefined) t.categoryId = null; });
   render();
 }
 async function saveState(){
@@ -229,6 +256,7 @@ function icon(name, size){
     mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 6.5l8.5 6 8.5-6"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9s1.3-6.5 3.8-9z"/>',
     home: '<path d="M3.5 10.5L12 3l8.5 7.5"/><path d="M5.5 9.5V20a1 1 0 001 1h4.5v-6h2v6H17a1 1 0 001-1V9.5"/>',
+    pin: '<path d="M12 21s-6.5-5.8-6.5-11A6.5 6.5 0 0112 3a6.5 6.5 0 016.5 6.5C18.5 15.2 12 21 12 21z"/><circle cx="12" cy="9.7" r="2"/>',
   };
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${map[name]||''}</svg>`;
 }
@@ -334,83 +362,106 @@ function mainBody(){
 }
 
 // ---------------- Home ----------------
+const PIN_OPTIONS = [
+  { val: 'remaining', label: 'Remaining' },
+  { val: 'open', label: 'Open tasks' },
+  { val: 'note', label: 'Note' },
+];
+const PIN_LABELS = { remaining: 'remaining', open: 'open tasks' };
+
+function ensureCategoryDefaults(c){
+  if (!c.featuredStat) c.featuredStat = 'remaining';
+  if (c.noteText === undefined) c.noteText = '';
+  return c;
+}
+
 function viewHome(){
   const key = todayKey();
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
-  const openTasks = state.tasks.filter(t => !t.done || t.completedDate===key);
 
   return `
     <div class="page-header">
       <div class="page-title">Home</div>
-      <div class="subtle">${dateLabel}</div>
-    </div>
-
-    <div class="card" style="margin-bottom:16px;">
-      <label class="section">Today's checklist</label>
-      ${openTasks.length===0 ? `
-        <p class="subtle" style="margin:10px 0;">Nothing on your list — add something below.</p>
-      ` : `
-        <div style="display:flex; flex-direction:column; gap:6px; margin:10px 0;">
-          ${openTasks.map(t => taskRow(t)).join('')}
-        </div>
-      `}
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <input id="new-task-text" placeholder="Add a task..." />
-        <button data-add-task class="btn btn-primary" style="padding:0 14px;">${icon('plus',15)}</button>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div class="subtle">${dateLabel}</div>
+        <button data-nav="categories" class="icon-btn" title="Manage cards" style="width:28px;height:28px;">${icon('pencil',13)}</button>
       </div>
     </div>
-
-    <div class="card">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-        <label class="section" style="margin:0;">Daily counts</label>
-        <button data-nav="categories" class="icon-btn" title="Manage categories" style="width:28px;height:28px;">${icon('pencil',13)}</button>
-      </div>
-      ${state.categories.length===0 ? `
-        <p class="subtle" style="margin:10px 0;">No categories yet — add one to start tracking.</p>
-      ` : `
-        <div style="display:flex; flex-direction:column; gap:16px; margin-top:10px;">
-          ${state.categories.map(c => dailyCountRow(c, key)).join('')}
-        </div>
-      `}
+    <div class="grid">
+      ${generalCard(key)}
+      ${state.categories.map(c => categoryCard(c, key)).join('')}
+      ${addCardTile()}
     </div>
   `;
 }
 
-function taskRow(t){
+function cardTaskRow(t){
   return `
-    <label style="display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--border); border-radius:10px; cursor:pointer; ${t.done?'opacity:.55;':''}">
-      <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} style="width:16px;height:16px;flex-shrink:0;" />
-      <span style="flex:1; font-size:14px; ${t.done?'text-decoration:line-through;':''}">${escapeHtml(t.text)}</span>
-      <button data-task-delete="${t.id}" class="icon-btn danger" style="width:26px;height:26px;flex-shrink:0;" title="Remove">${icon('trash',13)}</button>
+    <label class="card-task-row">
+      <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} />
+      <span style="flex:1; ${t.done?'text-decoration:line-through;color:var(--muted);':''}">${escapeHtml(t.text)}</span>
+      <button data-task-delete="${t.id}" class="icon-btn danger" style="width:22px;height:22px;flex-shrink:0;" title="Remove">${icon('trash',11)}</button>
     </label>
   `;
 }
 
-function dailyCountRow(c, key){
+function generalCard(key){
+  const tasks = state.tasks.filter(t => !t.categoryId);
+  const openCount = tasks.filter(t => !t.done || t.completedDate===key).length;
+  return `
+    <div class="card dcard">
+      <div class="dcard-head">
+        <span class="dcard-title">General</span>
+      </div>
+      <div class="stat-big"><span class="num">${openCount}</span><span class="lbl">open</span></div>
+      <p class="hint" style="margin:2px 0 10px;">Tasks not tied to a category</p>
+      <div class="dcard-tasks">
+        ${tasks.length ? tasks.map(t => cardTaskRow(t)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing here.</p>`}
+      </div>
+      <input data-card-task-input="__general" placeholder="Add a general task..." class="card-add-task" />
+    </div>
+  `;
+}
+
+function categoryCard(c, key){
+  ensureCategoryDefaults(c);
   const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
   const remaining = Math.max(0, rec.assigned - rec.completed);
   const pct = rec.assigned > 0 ? Math.min(100, Math.round((rec.completed/rec.assigned)*100)) : 0;
+  const catTasks = state.tasks.filter(t => t.categoryId===c.id);
+  const openCount = catTasks.filter(t => !t.done || t.completedDate===key).length;
+
+  const featured = c.featuredStat;
+  const statHtml = featured === 'note'
+    ? `<input data-card-note="${c.id}" class="note-input" placeholder="Type a note for this card..." value="${escapeAttr(c.noteText)}" />`
+    : `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
+
   return `
-    <div>
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-        <span style="font-weight:600; font-size:13.5px;">${escapeHtml(c.label)}</span>
-        <span class="subtle">${rec.completed} / ${rec.assigned || 0} · ${remaining} left</span>
-      </div>
-      <div class="row2" style="gap:8px; margin-bottom:8px;">
-        <div>
-          <label class="hint" style="display:block; margin-bottom:3px;">Assigned</label>
-          <input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" />
-        </div>
-        <div>
-          <label class="hint" style="display:block; margin-bottom:3px;">Completed</label>
-          <input type="number" min="0" data-count-field="${c.id}_completed" value="${rec.completed}" />
+    <div class="card dcard">
+      <div class="dcard-head">
+        <span class="dcard-title">${escapeHtml(c.label)}</span>
+        <button data-pin-toggle="${c.id}" class="icon-btn" title="Change pinned stat" style="width:26px;height:26px;">${icon('pin',13)}</button>
+        <div class="pin-menu" data-pin-menu="${c.id}">
+          ${PIN_OPTIONS.map(o => `<button data-pin-choose="${c.id}" data-choose-val="${o.val}">${o.label}</button>`).join('')}
         </div>
       </div>
-      <div style="height:6px; border-radius:4px; background:var(--border); overflow:hidden;">
-        <div style="height:100%; width:${pct}%; background:var(--primary);"></div>
+      ${statHtml}
+      <p class="hint" style="margin:2px 0 8px;">${rec.assigned} assigned · ${rec.completed} done</p>
+      <div class="count-edit">
+        <input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" placeholder="Assigned" />
+        <input type="number" min="0" data-count-field="${c.id}_completed" value="${rec.completed}" placeholder="Completed" />
       </div>
+      <div class="dcard-bar"><div class="dcard-bar-fill" style="width:${pct}%;"></div></div>
+      <div class="dcard-tasks">
+        ${catTasks.length ? catTasks.map(t => cardTaskRow(t)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">No tasks yet.</p>`}
+      </div>
+      <input data-card-task-input="${c.id}" placeholder="Add a task to ${escapeAttr(c.label)}..." class="card-add-task" />
     </div>
   `;
+}
+
+function addCardTile(){
+  return `<div data-add-category-tile class="addcard-tile">${icon('plus',18)}<span style="font-size:13px;">Add card</span></div>`;
 }
 
 // ---------------- Categories ----------------
@@ -747,6 +798,13 @@ async function runGenerate(){
 }
 
 // ---------------- event handling ----------------
+if (!window.__dispatchOutsideClickBound) {
+  window.__dispatchOutsideClickBound = true;
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.pin-menu.open').forEach(m => m.classList.remove('open'));
+  });
+}
+
 function attachHandlers(){
   document.querySelectorAll('[data-nav]').forEach(el => el.onclick = () => {
     view = el.getAttribute('data-nav');
@@ -754,17 +812,50 @@ function attachHandlers(){
     render();
   });
 
-  const addTaskBtn = document.querySelector('[data-add-task]');
-  const newTaskInput = document.getElementById('new-task-text');
-  const submitNewTask = () => {
-    if (!newTaskInput) return;
-    const text = newTaskInput.value.trim();
+  document.querySelectorAll('[data-card-task-input]').forEach(el => el.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const text = el.value.trim();
     if (!text) return;
-    state.tasks.push({ id: uid('task'), text, done:false, createdDate: todayKey(), completedDate:null });
+    const raw = el.getAttribute('data-card-task-input');
+    const categoryId = raw === '__general' ? null : raw;
+    state.tasks.push({ id: uid('task'), text, done:false, createdDate: todayKey(), completedDate:null, categoryId });
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-pin-toggle]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    const id = el.getAttribute('data-pin-toggle');
+    document.querySelectorAll('.pin-menu').forEach(m => {
+      if (m.getAttribute('data-pin-menu') === id) m.classList.toggle('open');
+      else m.classList.remove('open');
+    });
+  });
+
+  document.querySelectorAll('[data-pin-choose]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    const id = el.getAttribute('data-pin-choose');
+    const val = el.getAttribute('data-choose-val');
+    const cat = state.categories.find(c=>c.id===id);
+    if (!cat) return;
+    cat.featuredStat = val;
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-card-note]').forEach(el => el.onchange = () => {
+    const id = el.getAttribute('data-card-note');
+    const cat = state.categories.find(c=>c.id===id);
+    if (!cat) return;
+    cat.noteText = el.value;
+    saveState();
+  });
+
+  const addCardTileEl = document.querySelector('[data-add-category-tile]');
+  if (addCardTileEl) addCardTileEl.onclick = () => {
+    const name = prompt('Card name:');
+    if (!name || !name.trim()) return;
+    state.categories.push({ id: uid('c'), label: name.trim(), featuredStat: 'remaining', noteText: '' });
     saveState(); render();
   };
-  if (addTaskBtn) addTaskBtn.onclick = submitNewTask;
-  if (newTaskInput) newTaskInput.onkeydown = (e) => { if (e.key==='Enter') submitNewTask(); };
 
   document.querySelectorAll('[data-task-toggle]').forEach(el => el.onchange = () => {
     const id = el.getAttribute('data-task-toggle');
@@ -803,8 +894,9 @@ function attachHandlers(){
 
   document.querySelectorAll('[data-category-delete]').forEach(el => el.onclick = () => {
     const id = el.getAttribute('data-category-delete');
-    if (!confirm('Remove this category? Past counts stay in history but it will disappear from Home.')) return;
+    if (!confirm('Remove this card? Its tasks move to General, and past counts stay in history.')) return;
     state.categories = state.categories.filter(c=>c.id!==id);
+    state.tasks.forEach(t => { if (t.categoryId === id) t.categoryId = null; });
     saveState(); render();
   });
 
@@ -813,7 +905,7 @@ function attachHandlers(){
     const input = document.getElementById('new-category-label');
     const label = input.value.trim();
     if (!label) return;
-    state.categories.push({ id: uid('c'), label });
+    state.categories.push({ id: uid('c'), label, featuredStat: 'remaining', noteText: '' });
     saveState(); render();
   };
 
