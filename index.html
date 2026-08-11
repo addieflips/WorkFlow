@@ -113,10 +113,16 @@ const DEFAULT_STATE = {
   people: {},
   folders: [],
   lastLanguage: 'English (no translation)',
+  categories: [
+    { id: 'c_emails', label: 'Emails' },
+    { id: 'c_transfers', label: 'Account Transfers' },
+  ],
+  dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
+  tasks: [],         // { id, text, done, createdDate, completedDate }
 };
 
 let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
-let view = 'templates';
+let view = 'home';
 let selectedFolderId = null; // null = all templates
 let editingTemplateId = null;
 let generatingTemplateId = null;
@@ -129,6 +135,14 @@ let toast = '';
 let insertRoleSelection = 'sender';
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
+
+function todayKey(){
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 // ---------------- state persistence (Netlify Blobs via serverless function) ----------------
 async function loadState(){
@@ -187,6 +201,7 @@ function icon(name, size){
     idcard: '<rect x="3" y="5.5" width="18" height="13" rx="2.3"/><circle cx="8.3" cy="11.3" r="1.7"/><path d="M5.5 16c.4-1.7 1.6-2.5 2.8-2.5s2.4.8 2.8 2.5"/><path d="M13.5 10h5M13.5 13h5"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 6.5l8.5 6 8.5-6"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.7 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.7-3.8-9s1.3-6.5 3.8-9z"/>',
+    home: '<path d="M3.5 10.5L12 3l8.5 7.5"/><path d="M5.5 9.5V20a1 1 0 001 1h4.5v-6h2v6H17a1 1 0 001-1V9.5"/>',
   };
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${map[name]||''}</svg>`;
 }
@@ -209,6 +224,7 @@ function sidebarHtml(){
   return `
     <aside class="sidebar">
       <div class="logo-row"><div class="logo-mark">${icon('sparkle',15)}</div><div class="logo-text">Dispatch</div></div>
+      <div data-nav="home" class="nav-item ${view==='home'?'active':''}" style="margin-bottom:12px;">${icon('home',15)}<span class="lbl">Home</span></div>
       <button data-new-template class="btn btn-primary btn-block sidebar-new">${icon('plus',15)} New template</button>
 
       <div class="nav-title"><span>Folders</span><button data-add-folder title="New folder">${icon('plus',13)}</button></div>
@@ -227,12 +243,115 @@ function sidebarHtml(){
 }
 
 function mainBody(){
+  if (view === 'home') return viewHome();
+  if (view === 'categories') return viewCategories();
   if (view === 'templates') return viewTemplates();
   if (view === 'editor') return viewEditor();
   if (view === 'roles') return viewRoles();
   if (view === 'sender') return viewSender();
   if (view === 'generate') return viewGenerate();
   return '';
+}
+
+// ---------------- Home ----------------
+function viewHome(){
+  const key = todayKey();
+  const dateLabel = new Date().toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
+  const openTasks = state.tasks.filter(t => !t.done || t.completedDate===key);
+
+  return `
+    <div class="page-header">
+      <div class="page-title">Home</div>
+      <div class="subtle">${dateLabel}</div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Today's checklist</label>
+      ${openTasks.length===0 ? `
+        <p class="subtle" style="margin:10px 0;">Nothing on your list — add something below.</p>
+      ` : `
+        <div style="display:flex; flex-direction:column; gap:6px; margin:10px 0;">
+          ${openTasks.map(t => taskRow(t)).join('')}
+        </div>
+      `}
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <input id="new-task-text" placeholder="Add a task..." />
+        <button data-add-task class="btn btn-primary" style="padding:0 14px;">${icon('plus',15)}</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+        <label class="section" style="margin:0;">Daily counts</label>
+        <button data-nav="categories" class="icon-btn" title="Manage categories" style="width:28px;height:28px;">${icon('pencil',13)}</button>
+      </div>
+      ${state.categories.length===0 ? `
+        <p class="subtle" style="margin:10px 0;">No categories yet — add one to start tracking.</p>
+      ` : `
+        <div style="display:flex; flex-direction:column; gap:16px; margin-top:10px;">
+          ${state.categories.map(c => dailyCountRow(c, key)).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function taskRow(t){
+  return `
+    <label style="display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--border); border-radius:10px; cursor:pointer; ${t.done?'opacity:.55;':''}">
+      <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} style="width:16px;height:16px;flex-shrink:0;" />
+      <span style="flex:1; font-size:14px; ${t.done?'text-decoration:line-through;':''}">${escapeHtml(t.text)}</span>
+      <button data-task-delete="${t.id}" class="icon-btn danger" style="width:26px;height:26px;flex-shrink:0;" title="Remove">${icon('trash',13)}</button>
+    </label>
+  `;
+}
+
+function dailyCountRow(c, key){
+  const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
+  const remaining = Math.max(0, rec.assigned - rec.completed);
+  const pct = rec.assigned > 0 ? Math.min(100, Math.round((rec.completed/rec.assigned)*100)) : 0;
+  return `
+    <div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <span style="font-weight:600; font-size:13.5px;">${escapeHtml(c.label)}</span>
+        <span class="subtle">${rec.completed} / ${rec.assigned || 0} · ${remaining} left</span>
+      </div>
+      <div class="row2" style="gap:8px; margin-bottom:8px;">
+        <div>
+          <label class="hint" style="display:block; margin-bottom:3px;">Assigned</label>
+          <input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" />
+        </div>
+        <div>
+          <label class="hint" style="display:block; margin-bottom:3px;">Completed</label>
+          <input type="number" min="0" data-count-field="${c.id}_completed" value="${rec.completed}" />
+        </div>
+      </div>
+      <div style="height:6px; border-radius:4px; background:var(--border); overflow:hidden;">
+        <div style="height:100%; width:${pct}%; background:var(--primary);"></div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------------- Categories ----------------
+function viewCategories(){
+  return `
+    <button data-nav="home" class="back-link">${icon('chevronLeft',14)} Back to Home</button>
+    <div class="page-header"><div class="page-title">Categories</div></div>
+    <div class="card" style="max-width:480px;">
+      ${state.categories.map(c => `
+        <div style="display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:11px; padding:8px 10px; margin-bottom:8px;">
+          <input data-category-rename="${c.id}" value="${escapeAttr(c.label)}" style="border:none; padding:2px; flex:1;" />
+          <button data-category-delete="${c.id}" class="icon-btn danger" style="width:26px;height:26px;">${icon('trash',13)}</button>
+        </div>
+      `).join('')}
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <input id="new-category-label" placeholder="Add a category, e.g. Exceptions" />
+        <button data-add-category class="btn btn-primary" style="padding:0 14px;">${icon('plus',15)}</button>
+      </div>
+      <p class="hint" style="margin-top:10px;">These are the categories that show up on Home for daily assigned/completed counts.</p>
+    </div>
+  `;
 }
 
 // ---------------- Templates ----------------
@@ -554,6 +673,69 @@ function attachHandlers(){
     if (view==='templates'){ editingTemplateId=null; }
     render();
   });
+
+  const addTaskBtn = document.querySelector('[data-add-task]');
+  const newTaskInput = document.getElementById('new-task-text');
+  const submitNewTask = () => {
+    if (!newTaskInput) return;
+    const text = newTaskInput.value.trim();
+    if (!text) return;
+    state.tasks.push({ id: uid('task'), text, done:false, createdDate: todayKey(), completedDate:null });
+    saveState(); render();
+  };
+  if (addTaskBtn) addTaskBtn.onclick = submitNewTask;
+  if (newTaskInput) newTaskInput.onkeydown = (e) => { if (e.key==='Enter') submitNewTask(); };
+
+  document.querySelectorAll('[data-task-toggle]').forEach(el => el.onchange = () => {
+    const id = el.getAttribute('data-task-toggle');
+    const t = state.tasks.find(x=>x.id===id);
+    if (!t) return;
+    t.done = el.checked;
+    t.completedDate = el.checked ? todayKey() : null;
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-task-delete]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-task-delete');
+    state.tasks = state.tasks.filter(t=>t.id!==id);
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-count-field]').forEach(el => el.onchange = () => {
+    const attr = el.getAttribute('data-count-field');
+    const field = attr.endsWith('_assigned') ? 'assigned' : 'completed';
+    const catId = attr.replace(/_(assigned|completed)$/, '');
+    const key = todayKey();
+    if (!state.dailyCounts[key]) state.dailyCounts[key] = {};
+    if (!state.dailyCounts[key][catId]) state.dailyCounts[key][catId] = { assigned:0, completed:0 };
+    const val = Math.max(0, parseInt(el.value,10) || 0);
+    state.dailyCounts[key][catId][field] = val;
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-category-rename]').forEach(el => el.onchange = () => {
+    const id = el.getAttribute('data-category-rename');
+    const cat = state.categories.find(c=>c.id===id);
+    if (!cat) return;
+    cat.label = el.value.trim() || cat.label;
+    saveState(); render(); showToast('Category renamed');
+  });
+
+  document.querySelectorAll('[data-category-delete]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-category-delete');
+    if (!confirm('Remove this category? Past counts stay in history but it will disappear from Home.')) return;
+    state.categories = state.categories.filter(c=>c.id!==id);
+    saveState(); render();
+  });
+
+  const addCategoryBtn = document.querySelector('[data-add-category]');
+  if (addCategoryBtn) addCategoryBtn.onclick = () => {
+    const input = document.getElementById('new-category-label');
+    const label = input.value.trim();
+    if (!label) return;
+    state.categories.push({ id: uid('c'), label });
+    saveState(); render();
+  };
 
   document.querySelectorAll('[data-select-folder]').forEach(el => el.onclick = () => {
     const id = el.getAttribute('data-select-folder');
