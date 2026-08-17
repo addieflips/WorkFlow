@@ -2290,6 +2290,7 @@ function viewEditor(){
           <label class="section">Signed by</label>
           <select id="tpl-signer">
             <option value="sender" ${t.signerSource==='sender'?'selected':''}>Sender (you)</option>
+            <option value="none" ${t.signerSource==='none'?'selected':''}>No signature (template has its own)</option>
             ${t.requiredRoleIds.map(id => { const r = roles.find(x=>x.id===id); return `<option value="${id}" ${t.signerSource===id?'selected':''}>${escapeHtml(r?.label||'')}</option>`; }).join('')}
           </select>
         </div>
@@ -2326,7 +2327,7 @@ function viewEditor(){
       <div class="field">
         <label class="section">Body</label>
         <textarea id="tpl-body" rows="9" placeholder="Write the email here — click the buttons above to drop in a placeholder.">${escapeHtml(t.body)}</textarea>
-        <p class="hint">Greeting and signature are added automatically — no need to type them here.</p>
+        <p class="hint">End with your sign-off line, e.g. "Sincerely,". Your name is added on the next line automatically — unless you pick "No signature" above.</p>
       </div>
 
       <div style="display:flex; gap:8px;">
@@ -2777,9 +2778,11 @@ function buildFilledBody(t){
   let greeting = '';
   if (t.recipientRoleId && roleData[t.recipientRoleId]) greeting = `Hello ${roleData[t.recipientRoleId].name || '[name]'},\n\n`;
 
+  // 'none' leaves the body exactly as written - used where the template already
+  // names its own signer, e.g. "Sincerely,\nExceptions Committee".
   let signature = '';
-  if (t.signerSource === 'sender') signature = `\n\n${senderName}\n${senderEmail}`;
-  else if (roleData[t.signerSource]) signature = `\n\n${roleData[t.signerSource].name}\n${roleData[t.signerSource].email}`;
+  if (t.signerSource === 'sender') signature = senderName ? `\n${senderName}` : '';
+  else if (roleData[t.signerSource]) signature = `\n${roleData[t.signerSource].name}`;
 
   return greeting + body + signature;
 }
