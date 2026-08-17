@@ -884,8 +884,25 @@ function newTemplateDraft(){
 
 // ---------------- Roles ----------------
 function viewRoles(){
+  const knownIds = state.roles.map(r=>r.id);
+  const missing = {};
+  state.templates.forEach(t => (t.requiredRoleIds||[]).forEach(id => {
+    if (!knownIds.includes(id)) {
+      if (!missing[id]) missing[id] = [];
+      missing[id].push(t.title || 'Untitled');
+    }
+  }));
+  const missingIds = Object.keys(missing);
+
   return `
     <div class="page-header"><div class="page-title">Roles</div></div>
+    ${missingIds.length ? `
+      <div class="card" style="max-width:480px; margin-bottom:14px; border-color:var(--accent);">
+        <label class="section" style="color:var(--accent);">Missing roles</label>
+        <p class="hint" style="margin:4px 0 8px;">These templates reference a role that no longer exists. Restoring from a backup that contains it will reconnect them automatically.</p>
+        ${missingIds.map(id => `<p class="hint" style="margin:0 0 4px;"><strong>${escapeHtml(id)}</strong> — used by ${escapeHtml(missing[id].join(', '))}</p>`).join('')}
+      </div>
+    ` : ''}
     <div class="card" style="max-width:480px;">
       ${state.roles.map(r => `
         <div style="display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:11px; padding:8px 10px; margin-bottom:8px;">
@@ -1080,7 +1097,19 @@ function viewSender(){
 }
 
 function mergeIntoState(incoming){
-  let addedTemplates = 0, addedMembers = 0;
+  let addedTemplates = 0, addedMembers = 0, addedRoles = 0;
+
+  // Roles first: templates reference roles by id, so a restored template is only
+  // fully intact if its custom roles come back under their ORIGINAL ids.
+  if (Array.isArray(incoming.roles)) {
+    incoming.roles.forEach(r => {
+      if (!r || !r.id || !r.label) return;
+      if (state.roles.some(x => x.id === r.id)) return;
+      state.roles.push({ id: r.id, label: r.label, locked: !!r.locked });
+      addedRoles++;
+    });
+  }
+
   if (Array.isArray(incoming.templates)) {
     incoming.templates.forEach(t => {
       if (!t || !t.title) return;
@@ -1119,7 +1148,7 @@ function mergeIntoState(incoming){
       if (!state.folders.some(x => x.id===f.id || x.name===f.name)) state.folders.push(f);
     });
   }
-  return { addedTemplates, addedMembers };
+  return { addedTemplates, addedMembers, addedRoles };
 }
 
 // ---------------- Generate ----------------
@@ -1628,9 +1657,9 @@ function attachHandlers(){
       let incoming;
       try { incoming = JSON.parse(reader.result); }
       catch(e){ showToast('That file could not be read'); return; }
-      const { addedTemplates, addedMembers } = mergeIntoState(incoming);
+      const { addedTemplates, addedMembers, addedRoles } = mergeIntoState(incoming);
       saveState(); render();
-      showToast(`Restored ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}`);
+      showToast(`Restored ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}, ${addedRoles} role${addedRoles===1?'':'s'}`);
     };
     reader.readAsText(file);
   };
@@ -1639,9 +1668,9 @@ function attachHandlers(){
   if (recoverLegacyBtn) recoverLegacyBtn.onclick = () => {
     const legacy = readLegacyLocalState();
     if (!legacy) { showToast('Nothing found to recover'); return; }
-    const { addedTemplates, addedMembers } = mergeIntoState(legacy);
+    const { addedTemplates, addedMembers, addedRoles } = mergeIntoState(legacy);
     saveState(); render();
-    showToast(`Recovered ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}`);
+    showToast(`Recovered ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}, ${addedRoles} role${addedRoles===1?'':'s'}`);
   };
 
   const memberSearchEl = document.getElementById('member-search');
