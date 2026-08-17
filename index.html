@@ -47,6 +47,11 @@
   .nav-sub{ display:flex; flex-direction:column; gap:1px; margin:1px 0 1px 10px; padding-left:8px; border-left:1px solid var(--border); }
   .nav-item-sub{ font-size:13px; padding:6px 8px; color:var(--muted); gap:6px; }
   .nav-more{ color:var(--muted); font-size:13px; }
+  .nav-row{ display:flex; align-items:center; gap:2px; }
+  .nav-row-sub .nav-item{ min-width:0; }
+  .nav-pin{ display:flex; align-items:center; justify-content:center; width:24px; height:24px; border:none; background:none; color:var(--border); cursor:pointer; border-radius:6px; flex-shrink:0; padding:0; }
+  .nav-pin:hover{ color:var(--muted); background:var(--primary-soft); }
+  .nav-pin.on{ color:var(--primary); }
   .nav-item-sub.active{ color:var(--primary-dark); }
   .nav-add{ color:var(--muted); opacity:.75; }
   .nav-add:hover{ opacity:1; }
@@ -228,6 +233,7 @@ const DEFAULT_STATE = {
     { id: 'c_transfers', label: 'Account Transfers', featuredStat: 'remaining', noteText: '' },
   ],
   kb: [],            // knowledge base articles
+  pinnedNav: ['home','templates','triage','assistant'],
   teamGoal: null,    // { text, notes, target, progress, done, duration, startDate, endDate, repeat }
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
   tasks: [],         // { id, text, done, createdDate, completedDate }
@@ -364,6 +370,7 @@ async function loadState(){
     if (t.dueDate === undefined) t.dueDate = null;
     if (t.waitingOn === undefined) t.waitingOn = '';
   });
+  if (!Array.isArray(state.pinnedNav)) state.pinnedNav = ['home','templates','triage','assistant'];
   if (state.teamGoal === undefined) state.teamGoal = null;
   if (state.teamGoal) {
     const g = state.teamGoal;
@@ -591,42 +598,77 @@ function attachLockHandlers(){
   }
 }
 
+// Everything lives under More. Pin what you use to bring it to the top.
+const NAV_ITEMS = [
+  { key:'home',      label:'Home',         ic:'home'     },
+  { key:'templates', label:'Templates',    ic:'mail'     },
+  { key:'triage',    label:'Triage email', ic:'inbox'    },
+  { key:'assistant', label:'Assistant',    ic:'sparkle'  },
+  { key:'knowledge', label:'Knowledge',    ic:'book'     },
+  { key:'members',   label:'Members',      ic:'idcard'   },
+  { key:'calendar',  label:'Calendar',     ic:'calendar' },
+  { key:'dashboard', label:'Dashboard',    ic:'chart'    },
+  { key:'roles',     label:'Roles',        ic:'users'    },
+  { key:'sender',    label:'Sender',       ic:'user'     },
+];
+
+function navCount(key){
+  if (key === 'templates') return state.templates.length;
+  if (key === 'knowledge') return state.kb.length;
+  if (key === 'members')   return Object.keys(state.members||{}).length;
+  return null;
+}
+
+function isPinned(key){ return (state.pinnedNav||[]).includes(key); }
+
+function navIsActive(key){
+  if (key === 'templates') return ['templates','editor','generate','combineResult'].includes(view);
+  if (key === 'home') return view === 'home' || view === 'categories';
+  return view === key;
+}
+
+function navRow(item, opts){
+  const sub = opts && opts.sub;
+  const count = navCount(item.key);
+  const overdue = item.key === 'home' ? state.tasks.filter(isOverdue).length : 0;
+  const attr = item.key === 'templates' ? `data-select-folder=""` : `data-nav="${item.key}"`;
+  return `
+    <div class="nav-row${sub?' nav-row-sub':''}">
+      <div ${attr} class="nav-item${sub?' nav-item-sub':''} ${navIsActive(item.key)?'active':''}" style="flex:1;">
+        ${icon(item.ic, sub?13:15)}<span class="lbl">${item.label}</span>
+        ${overdue ? `<span class="nav-badge">${overdue}</span>` : (count ? `<span class="count">${count}</span>` : '')}
+      </div>
+      ${sub ? `<button data-pin-nav="${item.key}" class="nav-pin${isPinned(item.key)?' on':''}" title="${isPinned(item.key)?'Unpin':'Pin to top'}">${icon('pin',12)}</button>` : ''}
+    </div>`;
+}
+
 function sidebarHtml(){
-  const allCount = state.templates.length;
-  const onTemplates = (view==='templates' || view==='editor' || view==='generate' || view==='combineResult');
-  const overdueCount = state.tasks.filter(isOverdue).length;
-  const moreViews = ['knowledge','members','calendar','dashboard','roles','sender','categories'];
-  const moreOpen = showMoreNav || moreViews.includes(view);
+  const onTemplates = ['templates','editor','generate','combineResult'].includes(view);
+  const pinned = NAV_ITEMS.filter(i => isPinned(i.key));
+  const moreOpen = showMoreNav || (!pinned.length);
 
   return `
     <aside class="sidebar">
       <div class="logo-row"><div class="logo-mark">${icon('sparkle',15)}</div><div class="logo-text">Dispatch</div></div>
 
-      <div data-nav="home" class="nav-item ${view==='home'?'active':''}">${icon('home',15)}<span class="lbl">Home</span>${overdueCount ? `<span class="nav-badge">${overdueCount}</span>` : ''}</div>
-      <div data-select-folder="" class="nav-item ${onTemplates && selectedFolderId===null ? 'active':''}">${icon('mail',15)}<span class="lbl">Templates</span><span class="count">${allCount}</span></div>
-
-      ${onTemplates ? `
-        <div class="nav-sub">
-          ${state.folders.map(f => {
-            const count = state.templates.filter(t=>t.folderId===f.id).length;
-            return `<div data-select-folder="${f.id}" class="nav-item nav-item-sub ${selectedFolderId===f.id?'active':''}">${escapeHtml(f.name)}<span class="count">${count}</span></div>`;
-          }).join('')}
-          <div data-add-folder class="nav-item nav-item-sub nav-add">${icon('plus',12)} New folder</div>
-        </div>` : ''}
-
-      <div data-nav="triage" class="nav-item ${view==='triage'?'active':''}">${icon('inbox',15)}<span class="lbl">Triage email</span></div>
-      <div data-nav="assistant" class="nav-item ${view==='assistant'?'active':''}">${icon('sparkle',15)}<span class="lbl">Assistant</span></div>
+      ${pinned.map(i => `
+        ${navRow(i)}
+        ${i.key==='templates' && onTemplates ? `
+          <div class="nav-sub">
+            ${state.folders.map(f => {
+              const c = state.templates.filter(t=>t.folderId===f.id).length;
+              return `<div data-select-folder="${f.id}" class="nav-item nav-item-sub ${selectedFolderId===f.id?'active':''}">${escapeHtml(f.name)}<span class="count">${c}</span></div>`;
+            }).join('')}
+            <div data-add-folder class="nav-item nav-item-sub nav-add">${icon('plus',12)} New folder</div>
+          </div>` : ''}
+      `).join('')}
 
       <div class="nav-bottom">
         <div data-toggle-more class="nav-item nav-more">${icon(moreOpen?'chevronDown':'chevronRight',13)}<span class="lbl">More</span></div>
         ${moreOpen ? `
-          <div class="nav-sub">
-            <div data-nav="knowledge" class="nav-item nav-item-sub ${view==='knowledge'?'active':''}">Knowledge<span class="count">${state.kb.length}</span></div>
-            <div data-nav="members" class="nav-item nav-item-sub ${view==='members'?'active':''}">Members<span class="count">${Object.keys(state.members||{}).length}</span></div>
-            <div data-nav="calendar" class="nav-item nav-item-sub ${view==='calendar'?'active':''}">Calendar</div>
-            <div data-nav="dashboard" class="nav-item nav-item-sub ${view==='dashboard'?'active':''}">Dashboard</div>
-            <div data-nav="roles" class="nav-item nav-item-sub ${view==='roles'?'active':''}">Roles</div>
-            <div data-nav="sender" class="nav-item nav-item-sub ${view==='sender'?'active':''}">Sender</div>
+          <div class="nav-sub" style="margin-top:2px;">
+            ${NAV_ITEMS.map(i => navRow(i, { sub:true })).join('')}
+            <p class="hint" style="margin:6px 0 2px 8px;">Tap a pin to keep it at the top.</p>
           </div>` : ''}
       </div>
     </aside>
@@ -3417,6 +3459,16 @@ function attachHandlers(){
     saveState(); render();
     showToast(inFolder.length ? `Folder deleted, ${inFolder.length} template${inFolder.length===1?'':'s'} kept` : 'Folder deleted');
   };
+
+  document.querySelectorAll('[data-pin-nav]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    const key = el.getAttribute('data-pin-nav');
+    const list = (state.pinnedNav || []).slice();
+    const i = list.indexOf(key);
+    if (i >= 0) list.splice(i, 1); else list.push(key);
+    state.pinnedNav = list;
+    saveState(); render();
+  });
 
   const toggleMoreBtn = document.querySelector('[data-toggle-more]');
   if (toggleMoreBtn) toggleMoreBtn.onclick = () => { showMoreNav = !showMoreNav; render(); };
