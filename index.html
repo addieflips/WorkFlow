@@ -132,6 +132,22 @@
   .also-in{ display:inline-flex; align-items:center; gap:2px; font-size:10.5px; font-weight:600; color:var(--primary-dark); background:var(--primary-soft); border-radius:999px; padding:1px 5px; vertical-align:middle; }
   .search-hit{ display:flex; align-items:flex-start; gap:8px; padding:9px 11px; border:1px solid var(--border); border-radius:10px; margin-bottom:6px; }
   .search-meta{ font-size:11.5px; color:var(--muted); margin-top:2px; }
+  .cal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+  .cal-head{ margin-bottom:4px; }
+  .cal-dow{ font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; text-align:center; padding:4px 0; }
+  .cal-cell{ position:relative; min-height:52px; border:1px solid var(--border); border-radius:9px; padding:5px 6px; cursor:pointer; display:flex; flex-direction:column; align-items:flex-start; gap:3px; }
+  .cal-cell:hover{ border-color:var(--primary); }
+  .cal-num{ font-size:12px; color:var(--ink); }
+  .cal-dim{ opacity:.38; }
+  .cal-today{ background:var(--primary-soft); border-color:var(--primary); }
+  .cal-selected{ box-shadow:0 0 0 2px var(--primary); }
+  .cal-dot{ font-size:10.5px; font-weight:700; background:var(--primary); color:#fff; border-radius:999px; padding:0 6px; }
+  .cal-dot-late{ background:#D0453A; }
+  .due-pill{ font-size:10.5px; font-weight:600; color:var(--muted); background:var(--border); border-radius:999px; padding:1px 6px; }
+  .due-now{ background:var(--primary-soft); color:var(--primary-dark); }
+  .due-late{ background:#FDECEA; color:#D0453A; }
+  .wait-pill{ font-size:10.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border-radius:999px; padding:1px 6px; }
+  .task-editor{ border:1px solid var(--border); border-radius:9px; padding:8px 9px; margin:2px 0 6px; }
 </style>
 </head>
 <body>
@@ -188,6 +204,19 @@ let patternsLoading = false;
 let patternsError = '';
 let patternGroups = null; // [{ name, taskIds, samples }]
 let taskSearchQuery = '';
+let showTaskDetail = false;
+let calMonthOffset = 0;
+let selectedCalDay = null;
+let editingTaskId = null;
+
+const WAITING_OPTIONS = ['', 'Member', 'Team Lead', 'Manager', 'Department', 'Other'];
+
+function isOverdue(t){
+  return !t.done && t.dueDate && t.dueDate < todayKey();
+}
+function isDueToday(t){
+  return !t.done && t.dueDate === todayKey();
+}
 
 // ---------------- access passcode ----------------
 let passcode = '';
@@ -273,6 +302,8 @@ async function loadState(){
     if (!Array.isArray(t.categoryIds)) {
       t.categoryIds = t.categoryId ? [t.categoryId] : [];
     }
+    if (t.dueDate === undefined) t.dueDate = null;
+    if (t.waitingOn === undefined) t.waitingOn = '';
   });
   if (!state.members) state.members = {};
   if (!state.templates) state.templates = [];
@@ -340,6 +371,7 @@ function icon(name, size){
     chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     refresh: '<path d="M20 11a8 8 0 10-1.8 6.1"/><path d="M20 5v6h-6"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2.3"/><path d="M3 9.5h18M8 3v4M16 3v4"/>',
   };
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${map[name]||''}</svg>`;
 }
@@ -477,6 +509,7 @@ function sidebarHtml(){
       }).join('')}
 
       <div class="nav-bottom">
+        <div data-nav="calendar" class="nav-item ${view==='calendar'?'active':''}">${icon('calendar',15)}<span class="lbl">Calendar</span></div>
         <div data-nav="dashboard" class="nav-item ${view==='dashboard'?'active':''}">${icon('chart',15)}<span class="lbl">Dashboard</span></div>
         <div data-nav="members" class="nav-item ${view==='members'?'active':''}">${icon('idcard',15)}<span class="lbl">Members</span></div>
         <div data-nav="roles" class="nav-item ${view==='roles'?'active':''}">${icon('users',15)}<span class="lbl">Roles</span></div>
@@ -488,6 +521,7 @@ function sidebarHtml(){
 
 function mainBody(){
   if (view === 'home') return viewHome();
+  if (view === 'calendar') return viewCalendar();
   if (view === 'dashboard') return viewDashboard();
   if (view === 'categories') return viewCategories();
   if (view === 'templates') return viewTemplates();
@@ -531,6 +565,7 @@ function viewHome(){
     </div>
 
     ${taskSearchQuery.trim() ? taskSearchResults() : `
+    ${dueTodayPanel()}
     <div class="grid">
       ${generalCard(key)}
       ${state.categories.map(c => categoryCard(c, key)).join('')}
@@ -578,16 +613,72 @@ function taskSearchResults(){
   `;
 }
 
+// Anything due today, anything overdue that was never finished (carry-forward),
+// and anything parked waiting on someone else.
+function dueTodayPanel(){
+  const overdue = state.tasks.filter(isOverdue);
+  const today = state.tasks.filter(isDueToday);
+  const waiting = state.tasks.filter(t => !t.done && t.waitingOn && !isOverdue(t) && !isDueToday(t));
+  if (!overdue.length && !today.length && !waiting.length) return '';
+
+  const block = (title, list, cls) => list.length ? `
+    <div style="margin-bottom:10px;">
+      <p class="hint" style="margin:0 0 5px; font-weight:700; ${cls||''}">${title} · ${list.length}</p>
+      <div class="dcard-tasks" style="margin:0;">${list.map(t => cardTaskRow(t, null)).join('')}</div>
+    </div>` : '';
+
+  return `
+    <div class="card" style="margin-bottom:14px;">
+      <label class="section">Needs attention</label>
+      <div style="margin-top:10px;">
+        ${block('Overdue', overdue, 'color:#D0453A;')}
+        ${block('Due today', today, '')}
+        ${block('Waiting on someone', waiting, 'color:var(--muted);')}
+      </div>
+    </div>
+  `;
+}
+
+function taskEditorPanel(t){
+  return `
+    <div class="task-editor">
+      <div class="row2" style="gap:8px; margin-bottom:6px;">
+        <div>
+          <label class="hint" style="display:block; margin-bottom:2px;">Due date</label>
+          <input type="date" data-task-due="${t.id}" value="${escapeAttr(t.dueDate || '')}" style="font-size:12.5px; padding:5px 7px;" />
+        </div>
+        <div>
+          <label class="hint" style="display:block; margin-bottom:2px;">Waiting on</label>
+          <select data-task-waiting="${t.id}" style="font-size:12.5px; padding:5px 7px;">
+            ${WAITING_OPTIONS.map(o => `<option value="${escapeAttr(o)}" ${(t.waitingOn||'')===o?'selected':''}>${o || 'Nobody'}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button data-close-task-editor class="btn btn-ghost" style="padding:4px 10px; font-size:12px;">Done</button>
+    </div>
+  `;
+}
+
 function cardTaskRow(t, currentCatId){
   const others = taskCategoryIds(t).filter(id => id !== currentCatId)
     .map(id => (state.categories.find(c=>c.id===id)||{}).label).filter(Boolean);
   return `
     <label class="card-task-row">
       <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} />
-      <span style="flex:1; ${t.done?'text-decoration:line-through;color:var(--muted);':''}">${escapeHtml(t.text)}${others.length ? ` <span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}</span>
+      <span style="flex:1; ${t.done?'text-decoration:line-through;color:var(--muted);':''}">${escapeHtml(t.text)}${others.length ? ` <span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}</span>
+      <button data-open-task-editor="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Due date and waiting-on">${icon('calendar',11)}</button>
       <button data-task-delete="${t.id}" class="icon-btn danger" style="width:22px;height:22px;flex-shrink:0;" title="Remove">${icon('trash',11)}</button>
     </label>
+    ${editingTaskId===t.id ? taskEditorPanel(t) : ''}
   `;
+}
+
+function dueBadge(t){
+  if (!t.dueDate || t.done) return '';
+  const k = todayKey();
+  if (t.dueDate < k) return ` <span class="due-pill due-late">overdue</span>`;
+  if (t.dueDate === k) return ` <span class="due-pill due-now">today</span>`;
+  return ` <span class="due-pill">${escapeHtml(dateFromKey(t.dueDate).toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>`;
 }
 
 function generalCard(key){
@@ -934,6 +1025,164 @@ function viewDashboard(){
         <p class="hint" style="margin-top:10px;">Numbers under each day are how many you completed that day. Counts are entered on Home.</p>
       </div>
     `}
+
+    ${tasksTable(dayKeys, todayK)}
+  `;
+}
+
+// Tasks checked off per day. General gets its own row so uncategorized work is
+// never invisible. A task in two cards shows in both rows but is only counted
+// once in the totals.
+function tasksTable(dayKeys, todayK){
+  const doneInWeek = state.tasks.filter(t => t.done && dayKeys.includes(t.completedDate));
+  if (!doneInWeek.length) {
+    return `<div class="card" style="margin-top:16px;">
+      <label class="section">Tasks checked off</label>
+      <p class="subtle" style="margin:10px 0 0; font-size:13px;">Nothing checked off this week yet.</p>
+    </div>`;
+  }
+
+  const rows = [];
+  const generalPerDay = dayKeys.map(k => doneInWeek.filter(t => t.completedDate===k && taskCategoryIds(t).length===0));
+  const generalTotal = doneInWeek.filter(t => taskCategoryIds(t).length===0).length;
+  if (generalTotal) rows.push({ label:'General', perDay:generalPerDay, total:generalTotal, isGeneral:true });
+
+  state.categories.forEach(c => {
+    const perDay = dayKeys.map(k => doneInWeek.filter(t => t.completedDate===k && taskCategoryIds(t).includes(c.id)));
+    const total = doneInWeek.filter(t => taskCategoryIds(t).includes(c.id)).length;
+    if (total) rows.push({ label:c.label, perDay, total, isGeneral:false });
+  });
+
+  const distinctPerDay = dayKeys.map(k => doneInWeek.filter(t => t.completedDate===k).length);
+
+  return `
+    <div class="card" style="margin-top:16px; overflow-x:auto;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
+        <label class="section" style="margin:0;">Tasks checked off</label>
+        <button data-toggle-task-detail class="btn btn-ghost" style="padding:5px 11px; font-size:12.5px;">${showTaskDetail ? 'Hide titles' : 'Show titles'}</button>
+      </div>
+      <table class="wk-table">
+        <thead><tr>
+          <th style="text-align:left;">Where</th>
+          ${dayKeys.map(k => `<th${k===todayK?' class="wk-today"':''}>${dateFromKey(k).toLocaleDateString(undefined,{weekday:'short'})}</th>`).join('')}
+          <th>Total</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td style="text-align:left; font-weight:600;">${escapeHtml(r.label)}${r.isGeneral ? ` <span class="subtle" style="font-weight:400; font-size:11.5px;">no card</span>` : ''}</td>
+              ${r.perDay.map((list,i) => `<td${dayKeys[i]===todayK?' class="wk-today"':''}>${list.length ? list.length : '<span class="wk-zero">·</span>'}</td>`).join('')}
+              <td style="font-weight:700;">${r.total}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td style="text-align:left; font-weight:700;">Distinct tasks</td>
+          ${distinctPerDay.map((n,i) => `<td${dayKeys[i]===todayK?' class="wk-today"':''} style="font-weight:700;">${n ? n : '<span class="wk-zero">·</span>'}</td>`).join('')}
+          <td style="font-weight:700;">${doneInWeek.length}</td>
+        </tr></tfoot>
+      </table>
+      ${generalTotal ? `<p class="hint" style="margin-top:10px;">${generalTotal} task${generalTotal===1?'':'s'} finished without a card. Run <strong>Find patterns</strong> above to see if they group into something worth making a card for.</p>` : ''}
+      ${showTaskDetail ? `
+        <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
+          ${dayKeys.map(k => {
+            const list = doneInWeek.filter(t => t.completedDate===k);
+            if (!list.length) return '';
+            return `
+              <div style="margin-bottom:10px;">
+                <p class="hint" style="margin:0 0 4px; font-weight:700;">${dateFromKey(k).toLocaleDateString(undefined,{weekday:'long'})} · ${list.length} done</p>
+                ${list.slice(0,5).map(t => `<div class="sweep-item" style="color:var(--ink);">${escapeHtml(t.text)}</div>`).join('')}
+                ${list.length>5 ? `<div class="hint" style="margin:2px 0 0;">+${list.length-5} more</div>` : ''}
+              </div>`;
+          }).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ---------------- Calendar ----------------
+function monthGrid(offset){
+  const now = new Date();
+  const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const year = base.getFullYear(), month = base.getMonth();
+  const first = new Date(year, month, 1);
+  const startDow = first.getDay();             // 0=Sun
+  const shift = startDow === 0 ? 6 : startDow - 1;  // grid starts Monday
+  const gridStart = new Date(year, month, 1 - shift);
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    cells.push(d);
+  }
+  return { cells, month, year, label: base.toLocaleDateString(undefined,{month:'long', year:'numeric'}) };
+}
+
+function tasksDueOn(key){
+  return state.tasks.filter(t => t.dueDate === key);
+}
+
+function viewCalendar(){
+  const g = monthGrid(calMonthOffset);
+  const todayK = todayKey();
+  const sel = selectedCalDay;
+
+  return `
+    <div class="page-header">
+      <div class="page-title">Calendar</div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button data-cal-shift="-1" class="icon-btn" title="Previous month">${icon('chevronLeft',15)}</button>
+        <span class="subtle" style="min-width:140px; text-align:center;">${escapeHtml(g.label)}</span>
+        <button data-cal-shift="1" class="icon-btn" title="Next month">${icon('chevronRight',15)}</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="cal-grid cal-head">
+        ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+      </div>
+      <div class="cal-grid">
+        ${g.cells.map(d => {
+          const k = keyFromDate(d);
+          const inMonth = d.getMonth() === g.month;
+          const due = tasksDueOn(k);
+          const open = due.filter(t => !t.done).length;
+          const overdue = k < todayK && open > 0;
+          return `
+            <div data-cal-day="${k}" class="cal-cell${inMonth?'':' cal-dim'}${k===todayK?' cal-today':''}${sel===k?' cal-selected':''}">
+              <span class="cal-num">${d.getDate()}</span>
+              ${due.length ? `<span class="cal-dot${overdue?' cal-dot-late':''}">${open || due.length}</span>` : ''}
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    ${sel ? calendarDayPanel(sel) : `<p class="subtle">Pick a day to see or add what's due.</p>`}
+  `;
+}
+
+function calendarDayPanel(key){
+  const due = tasksDueOn(key);
+  const d = dateFromKey(key);
+  const label = d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
+  return `
+    <div class="card">
+      <label class="section">${escapeHtml(label)}</label>
+      ${due.length ? `
+        <div class="dcard-tasks" style="margin:10px 0;">
+          ${due.map(t => cardTaskRow(t, null)).join('')}
+        </div>
+      ` : `<p class="subtle" style="margin:10px 0; font-size:13px;">Nothing due.</p>`}
+      <div style="display:flex; gap:8px;">
+        <input id="cal-new-task" placeholder="Add something due this day..." />
+        <select id="cal-new-cat" style="max-width:150px;">
+          <option value="">General</option>
+          ${state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.label)}</option>`).join('')}
+        </select>
+      </div>
+      <p class="hint">Press Enter to add. It'll appear on Home when the day arrives.</p>
+    </div>
   `;
 }
 
@@ -1873,6 +2122,61 @@ function attachHandlers(){
     state.categories.push({ id: uid('c'), label, featuredStat: 'remaining', noteText: '' });
     saveState(); render();
   };
+
+  document.querySelectorAll('[data-cal-shift]').forEach(el => el.onclick = () => {
+    calMonthOffset += parseInt(el.getAttribute('data-cal-shift'), 10);
+    selectedCalDay = null;
+    render();
+  });
+
+  document.querySelectorAll('[data-cal-day]').forEach(el => el.onclick = () => {
+    const k = el.getAttribute('data-cal-day');
+    selectedCalDay = (selectedCalDay === k) ? null : k;
+    render();
+  });
+
+  const calNewTask = document.getElementById('cal-new-task');
+  if (calNewTask) calNewTask.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const text = calNewTask.value.trim();
+    if (!text || !selectedCalDay) return;
+    const catSel = document.getElementById('cal-new-cat');
+    const catId = catSel ? catSel.value : '';
+    state.tasks.push({
+      id: uid('task'), text, done:false,
+      createdDate: todayKey(), completedDate:null,
+      categoryIds: catId ? [catId] : [],
+      dueDate: selectedCalDay, waitingOn: '',
+    });
+    saveState(); render();
+  };
+
+  document.querySelectorAll('[data-open-task-editor]').forEach(el => el.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const id = el.getAttribute('data-open-task-editor');
+    editingTaskId = (editingTaskId === id) ? null : id;
+    render();
+  });
+
+  const closeTaskEditorBtn = document.querySelector('[data-close-task-editor]');
+  if (closeTaskEditorBtn) closeTaskEditorBtn.onclick = (e) => { e.preventDefault(); editingTaskId = null; render(); };
+
+  document.querySelectorAll('[data-task-due]').forEach(el => el.onchange = () => {
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-task-due'));
+    if (!t) return;
+    t.dueDate = el.value || null;
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-task-waiting]').forEach(el => el.onchange = () => {
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-task-waiting'));
+    if (!t) return;
+    t.waitingOn = el.value;
+    saveState(); render();
+  });
+
+  const toggleTaskDetailBtn = document.querySelector('[data-toggle-task-detail]');
+  if (toggleTaskDetailBtn) toggleTaskDetailBtn.onclick = () => { showTaskDetail = !showTaskDetail; render(); };
 
   const findPatternsBtn = document.querySelector('[data-find-patterns]');
   if (findPatternsBtn) findPatternsBtn.onclick = () => { if (!patternsLoading) runFindPatterns(); };
