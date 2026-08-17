@@ -6,11 +6,38 @@ const { checkAuth } = require('./_auth');
 
 const KEY = 'state';
 
+// Netlify usually injects Blobs credentials automatically. When that automatic
+// wiring is missing (MissingBlobsEnvironmentError), fall back to explicit
+// credentials from environment variables so the store still works.
+function openStore() {
+  try {
+    return getStore('dispatch-state');
+  } catch (e) {
+    const siteID = process.env.BLOBS_SITE_ID || process.env.SITE_ID;
+    const token = process.env.BLOBS_TOKEN || process.env.NETLIFY_API_TOKEN;
+    if (siteID && token) {
+      return getStore({ name: 'dispatch-state', siteID, token });
+    }
+    throw e;
+  }
+}
+
 exports.handler = async function (event) {
   const denied = checkAuth(event);
   if (denied) return denied;
 
-  const store = getStore('dispatch-state');
+  let store;
+  try {
+    store = openStore();
+  } catch (e) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'blobs_unconfigured',
+        message: 'Netlify Blobs is not configured. Add BLOBS_SITE_ID and BLOBS_TOKEN environment variables, then redeploy.',
+      }),
+    };
+  }
 
   if (event.httpMethod === 'GET') {
     try {
