@@ -148,6 +148,25 @@
   .due-late{ background:#FDECEA; color:#D0453A; }
   .wait-pill{ font-size:10.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border-radius:999px; padding:1px 6px; }
   .task-editor{ border:1px solid var(--border); border-radius:9px; padding:8px 9px; margin:2px 0 6px; }
+  .src-pill{ font-size:10.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border-radius:999px; padding:1px 7px; }
+  .kb-content{ white-space:pre-wrap; font-size:13.5px; line-height:1.6; }
+  .conf-pill{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:999px; padding:2px 9px; }
+  .conf-high{ background:#EAF6EF; color:#2F7A4F; }
+  .conf-med{ background:#FEF6E7; color:#A8730F; }
+  .conf-low{ background:#FDECEA; color:#C13B30; }
+  .src-row{ display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:9px; margin-bottom:6px; }
+  .lead-q{ font-size:14px; line-height:1.6; background:#fff; border:1px solid #F2D398; border-radius:9px; padding:10px 12px; }
+  .dcard{ position:relative; transition:border-color .15s ease, background .15s ease; }
+  .tone-red{ border-color:#F0B4AE; background:#FEF6F5; }
+  .tone-red .stat-big .num{ color:#C13B30; }
+  .tone-amber{ border-color:#F2D398; background:#FFFBF2; }
+  .tone-amber .stat-big .num{ color:#A8730F; }
+  .tone-green{ border-color:#A9D8BF; background:#F5FBF7; }
+  .tone-green .stat-big .num{ color:#2F7A4F; }
+  .tone-flag{ position:absolute; top:-8px; left:14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:999px; }
+  .tone-red .tone-flag{ background:#C13B30; color:#fff; }
+  .tone-amber .tone-flag{ background:#A8730F; color:#fff; }
+  .tone-green .tone-flag{ background:#2F7A4F; color:#fff; }
 </style>
 </head>
 <body>
@@ -172,6 +191,7 @@ const DEFAULT_STATE = {
     { id: 'c_emails', label: 'Emails', featuredStat: 'remaining', noteText: '' },
     { id: 'c_transfers', label: 'Account Transfers', featuredStat: 'remaining', noteText: '' },
   ],
+  kb: [],            // knowledge base articles
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
   tasks: [],         // { id, text, done, createdDate, completedDate }
 };
@@ -305,6 +325,12 @@ async function loadState(){
     if (t.dueDate === undefined) t.dueDate = null;
     if (t.waitingOn === undefined) t.waitingOn = '';
   });
+  if (!Array.isArray(state.kb)) state.kb = [];
+  state.kb.forEach(a => {
+    if (!Array.isArray(a.tags)) a.tags = [];
+    if (!a.category) a.category = 'Uncategorized';
+    if (!a.source) a.source = 'Other';
+  });
   if (!state.members) state.members = {};
   if (!state.templates) state.templates = [];
   state.templates.forEach(t => {
@@ -372,6 +398,7 @@ function icon(name, size){
     refresh: '<path d="M20 11a8 8 0 10-1.8 6.1"/><path d="M20 5v6h-6"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2.3"/><path d="M3 9.5h18M8 3v4M16 3v4"/>',
+    book: '<path d="M4 4.5A1.5 1.5 0 015.5 3H19v18H5.5A1.5 1.5 0 014 19.5v-15z"/><path d="M4 17.5A1.5 1.5 0 015.5 16H19"/>',
   };
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${map[name]||''}</svg>`;
 }
@@ -509,6 +536,8 @@ function sidebarHtml(){
       }).join('')}
 
       <div class="nav-bottom">
+        <div data-nav="assistant" class="nav-item ${view==='assistant'?'active':''}">${icon('sparkle',15)}<span class="lbl">Assistant</span></div>
+        <div data-nav="knowledge" class="nav-item ${view==='knowledge'?'active':''}">${icon('book',15)}<span class="lbl">Knowledge</span></div>
         <div data-nav="calendar" class="nav-item ${view==='calendar'?'active':''}">${icon('calendar',15)}<span class="lbl">Calendar</span></div>
         <div data-nav="dashboard" class="nav-item ${view==='dashboard'?'active':''}">${icon('chart',15)}<span class="lbl">Dashboard</span></div>
         <div data-nav="members" class="nav-item ${view==='members'?'active':''}">${icon('idcard',15)}<span class="lbl">Members</span></div>
@@ -521,6 +550,8 @@ function sidebarHtml(){
 
 function mainBody(){
   if (view === 'home') return viewHome();
+  if (view === 'assistant') return viewAssistant();
+  if (view === 'knowledge') return viewKnowledge();
   if (view === 'calendar') return viewCalendar();
   if (view === 'dashboard') return viewDashboard();
   if (view === 'categories') return viewCategories();
@@ -548,6 +579,30 @@ function ensureCategoryDefaults(c){
   return c;
 }
 
+// Card urgency: red (overdue) > amber (due today) > green (work remaining) > plain.
+// Rank drives the order on screen, tone drives the colour.
+function cardPriority(catId, key){
+  const tasks = catId === null
+    ? state.tasks.filter(t => taskCategoryIds(t).length === 0)
+    : state.tasks.filter(t => taskCategoryIds(t).includes(catId));
+
+  if (tasks.some(isOverdue)) return { rank: 0, tone: 'red' };
+  if (tasks.some(isDueToday)) return { rank: 1, tone: 'amber' };
+
+  if (catId !== null) {
+    const rec = (state.dailyCounts[key] && state.dailyCounts[key][catId]) || { assigned:0, completed:0 };
+    if (Math.max(0, rec.assigned - rec.completed) > 0) return { rank: 2, tone: 'green' };
+  }
+  return { rank: 3, tone: '' };
+}
+
+function sortedHomeCards(key){
+  const items = [{ id: null, cat: null }].concat(state.categories.map(c => ({ id: c.id, cat: c })));
+  return items
+    .map((it, i) => Object.assign({}, it, cardPriority(it.id, key), { origIndex: i }))
+    .sort((a,b) => a.rank - b.rank || a.origIndex - b.origIndex);
+}
+
 function viewHome(){
   const key = todayKey();
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
@@ -567,8 +622,7 @@ function viewHome(){
     ${taskSearchQuery.trim() ? taskSearchResults() : `
     ${dueTodayPanel()}
     <div class="grid">
-      ${generalCard(key)}
-      ${state.categories.map(c => categoryCard(c, key)).join('')}
+      ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone) : categoryCard(it.cat, key, it.tone)).join('')}
       ${addCardTile()}
     </div>`}
   `;
@@ -681,11 +735,11 @@ function dueBadge(t){
   return ` <span class="due-pill">${escapeHtml(dateFromKey(t.dueDate).toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>`;
 }
 
-function generalCard(key){
+function generalCard(key, tone){
   const tasks = state.tasks.filter(t => taskCategoryIds(t).length === 0);
   const openCount = tasks.filter(t => !t.done || t.completedDate===key).length;
   return `
-    <div class="card dcard">
+    <div class="card dcard${tone ? ' tone-'+tone : ''}">
       <div class="dcard-head">
         <span class="dcard-title">General</span>
       </div>
@@ -699,7 +753,7 @@ function generalCard(key){
   `;
 }
 
-function categoryCard(c, key){
+function categoryCard(c, key, tone){
   ensureCategoryDefaults(c);
   const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
   const remaining = Math.max(0, rec.assigned - rec.completed);
@@ -713,7 +767,8 @@ function categoryCard(c, key){
     : `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
 
   return `
-    <div class="card dcard">
+    <div class="card dcard${tone ? ' tone-'+tone : ''}">
+      ${tone ? `<span class="tone-flag">${toneLabel(tone)}</span>` : ''}
       <div class="dcard-head">
         <span class="dcard-title">${escapeHtml(c.label)}</span>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
@@ -786,6 +841,13 @@ function tasksMatchingLabel(label, includeCategorized, excludeCatId){
     if (!includeCategorized && taskCategoryIds(t).length) return false;
     return taskMatchesKeywords(t, stems);
   });
+}
+
+function toneLabel(tone){
+  if (tone === 'red') return 'Overdue';
+  if (tone === 'amber') return 'Due today';
+  if (tone === 'green') return 'In progress';
+  return '';
 }
 
 function addCardTile(){
@@ -1097,6 +1159,298 @@ function tasksTable(dayKeys, todayK){
           }).join('')}
         </div>
       ` : ''}
+    </div>
+  `;
+}
+
+// ---------------- AI Assistant ----------------
+let askQuestion = '';
+let askLoading = false;
+let askError = '';
+let askResult = null;      // { answerFound, answer, explanation, sourceIds, confidence, suggestedQuestion }
+let leadAnswerText = '';
+let savingLeadAnswer = false;
+
+function viewAssistant(){
+  const hasKb = state.kb.length > 0;
+  return `
+    <div class="page-header"><div class="page-title">Assistant</div></div>
+
+    ${!hasKb ? `
+      <div class="card empty">
+        <div class="empty-icon">${icon('book',20)}</div>
+        <div>Nothing in the Knowledge Base yet.</div>
+        <p class="hint" style="margin-top:8px;">Answers come only from what you've saved, so add an article or two first.</p>
+      </div>
+    ` : `
+      <div class="card" style="margin-bottom:16px;">
+        <label class="section">Ask a question</label>
+        <p class="hint" style="margin:3px 0 8px;">Answered only from your ${state.kb.length} saved article${state.kb.length===1?'':'s'} — never from anything else.</p>
+        <textarea id="ask-input" rows="3" placeholder="Can this account transfer be approved if the member has already had an enroller change?">${escapeHtml(askQuestion)}</textarea>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button data-run-ask class="btn btn-primary" style="padding:9px 18px;" ${askLoading?'disabled':''}>${askLoading ? 'Checking…' : 'Ask'}</button>
+          ${askResult ? `<button data-clear-ask class="btn btn-ghost" style="padding:9px 16px;">Clear</button>` : ''}
+        </div>
+        ${askError ? `<p style="color:#D0453A; font-size:13px; margin:10px 0 0;">${escapeHtml(askError)}</p>` : ''}
+      </div>
+
+      ${askResult ? askResultPanel() : ''}
+    `}
+  `;
+}
+
+function confidencePill(level){
+  const map = { high:'conf-high', medium:'conf-med', low:'conf-low' };
+  return `<span class="conf-pill ${map[level]||'conf-low'}">${escapeHtml(level||'low')} confidence</span>`;
+}
+
+function askResultPanel(){
+  const r = askResult;
+
+  if (!r.answerFound) {
+    return `
+      <div class="card" style="border-color:#F2D398; background:#FFFBF2;">
+        <label class="section" style="color:#A8730F;">Not enough information</label>
+        <p style="font-size:14px; line-height:1.6; margin:8px 0 0;">${escapeHtml(r.explanation || "Nothing saved covers this.")}</p>
+        ${r.suggestedQuestion ? `
+          <div style="border-top:1px solid #F2D398; margin-top:12px; padding-top:12px;">
+            <label class="section">Ask your team lead</label>
+            <div class="lead-q">${escapeHtml(r.suggestedQuestion)}</div>
+            <button data-copy-lead-question class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin-top:8px;">${icon('copy',13)} Copy question</button>
+
+            <div style="margin-top:14px;">
+              <label class="hint" style="display:block; margin-bottom:4px;">When you get an answer, paste it here to save it</label>
+              <textarea id="lead-answer" rows="3" placeholder="What your team lead said...">${escapeHtml(leadAnswerText)}</textarea>
+              <button data-save-lead-answer class="btn btn-primary" style="padding:7px 15px; font-size:13px; margin-top:8px;">Save to Knowledge Base</button>
+              <p class="hint" style="margin-top:6px;">Saved with source "Team Lead" and today's date, so next time this question answers itself.</p>
+            </div>
+          </div>` : ''}
+      </div>
+    `;
+  }
+
+  const sources = (r.sourceIds || []).map(id => state.kb.find(a => a.id === id)).filter(Boolean);
+  return `
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+        <label class="section" style="margin:0;">Answer</label>
+        ${confidencePill(r.confidence)}
+      </div>
+      <p style="font-size:15px; line-height:1.6; margin:0 0 12px; font-weight:500;">${escapeHtml(r.answer)}</p>
+      ${r.explanation ? `<p style="font-size:13.5px; line-height:1.6; color:var(--muted); margin:0 0 12px;">${escapeHtml(r.explanation)}</p>` : ''}
+
+      <div style="border-top:1px solid var(--border); padding-top:11px;">
+        <label class="hint" style="display:block; margin-bottom:6px; font-weight:700;">Based on</label>
+        ${sources.length ? sources.map(a => `
+          <div class="src-row">
+            <div style="flex:1;">
+              <div style="font-size:13.5px; font-weight:600;">${escapeHtml(a.title)}</div>
+              <div class="search-meta">${escapeHtml(a.source)}${a.sourceDetail ? ' · ' + escapeHtml(a.sourceDetail) : ''}${a.updatedDate ? ' · updated ' + escapeHtml(a.updatedDate) : ''}</div>
+            </div>
+            <button data-goto-article="${a.id}" class="icon-btn" title="Open in Knowledge Base">${icon('book',14)}</button>
+          </div>
+        `).join('') : `<p class="hint" style="margin:0;">No specific article was cited — treat this answer with caution.</p>`}
+      </div>
+      <p class="hint" style="margin-top:11px;">Always check the source before acting on this. It reflects what you saved, which may be out of date.</p>
+    </div>
+  `;
+}
+
+async function runAsk(){
+  const q = (document.getElementById('ask-input')?.value || '').trim();
+  if (!q) { showToast('Type a question first'); return; }
+  askQuestion = q; askError = ''; askResult = null; askLoading = true; render();
+
+  const articles = state.kb.map(a => [
+    "[" + a.id + "] TITLE: " + a.title,
+    "CATEGORY: " + a.category,
+    "SOURCE: " + a.source + (a.sourceDetail ? " (" + a.sourceDetail + ")" : ""),
+    "UPDATED: " + (a.updatedDate || "unknown"),
+    "CONTENT:",
+    a.content
+  ].join("\n")).join("\n\n---\n\n");
+
+  const instruction = `You answer work questions using ONLY the reference articles provided below. This is a strict constraint.
+
+Rules:
+- Use ONLY information stated in the articles. Do not use outside knowledge about this company, its policies, or the industry.
+- Do NOT guess, infer a policy that is not written, or fill gaps with what seems reasonable.
+- If the articles do not clearly answer the question, set "answerFound" to false. This is the correct, expected outcome when coverage is missing — do not stretch a partial match into an answer.
+- When answerFound is false, write a specific question the person could ask their team lead. Make it precise about the exact situation and the missing rule, not generic.
+- Cite the id of every article you relied on, exactly as given in square brackets.
+- Set confidence: "high" if the articles directly and completely answer it; "medium" if they answer it but leave some ambiguity; "low" if you are stretching.
+- If articles conflict, say so in the explanation rather than picking one silently.
+
+Return ONLY valid JSON, no markdown fences, in exactly this shape:
+{"answerFound": true, "answer": "short direct answer", "explanation": "why, referencing what the articles say", "sourceIds": ["kb_abc"], "confidence": "high", "suggestedQuestion": ""}
+
+QUESTION:
+${q}
+
+REFERENCE ARTICLES:
+${articles}`;
+
+  try {
+    const resp = await fetch('/.netlify/functions/combine', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ instruction }),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if (!resp.ok) throw new Error(data.error || ('Request failed (' + resp.status + ')'));
+    let parsed;
+    try { parsed = JSON.parse((data.result||'').replace(/```json|```/g,'').trim()); }
+    catch(e){ throw new Error('Could not read the answer.'); }
+
+    // Only keep citations that point at articles that actually exist.
+    const validIds = (parsed.sourceIds || []).filter(id => state.kb.some(a => a.id === id));
+    askResult = {
+      answerFound: !!parsed.answerFound && !!(parsed.answer||'').trim(),
+      answer: parsed.answer || '',
+      explanation: parsed.explanation || '',
+      sourceIds: validIds,
+      confidence: parsed.confidence || 'low',
+      suggestedQuestion: parsed.suggestedQuestion || '',
+    };
+    askLoading = false; render();
+  } catch(e){
+    askLoading = false;
+    askError = e.message || 'Could not get an answer.';
+    render();
+  }
+}
+
+// ---------------- Knowledge Base ----------------
+const KB_SOURCES = ['Guru', 'Policy', 'Team Lead', 'Support Tools', 'Training', 'Other'];
+const KB_CATEGORY_SUGGESTIONS = ['Account Transfers','Sponsor Moves','Exception Committee','Enroller Changes','Placements','Rank','Volume','Processes','Rules','FAQs'];
+
+let kbSearchQuery = '';
+let kbCategoryFilter = '';
+let editingArticleId = null;   // null = closed, 'new' = adding, id = editing
+let articleDraft = null;
+let expandedArticleId = null;
+
+function blankArticle(){
+  return {
+    id: null, title: '', summary: '', content: '',
+    category: '', tags: [], source: 'Guru', sourceDetail: '',
+    createdDate: todayKey(), updatedDate: todayKey(),
+  };
+}
+
+function kbCategories(){
+  const set = {};
+  state.kb.forEach(a => { if (a.category) set[a.category] = true; });
+  return Object.keys(set).sort();
+}
+
+function articleMatches(a, q, cat){
+  if (cat && a.category !== cat) return false;
+  if (!q) return true;
+  const hay = [a.title, a.summary, a.content, a.category, a.sourceDetail, ...(a.tags||[])].join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
+function viewKnowledge(){
+  const q = kbSearchQuery.trim().toLowerCase();
+  const cats = kbCategories();
+  const list = state.kb.filter(a => articleMatches(a, q, kbCategoryFilter))
+    .sort((a,b) => (b.updatedDate||'').localeCompare(a.updatedDate||''));
+
+  return `
+    <div class="page-header">
+      <div class="page-title">Knowledge Base</div>
+      <button data-new-article class="btn btn-primary" style="padding:8px 14px;">${icon('plus',15)} Add article</button>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
+      <input id="kb-search" placeholder="Search everything you've saved" value="${escapeAttr(kbSearchQuery)}" style="max-width:320px;" />
+      ${cats.length ? `
+        <div class="chip-row">
+          <label class="role-chip ${!kbCategoryFilter?'active':''}" data-kb-cat="">All</label>
+          ${cats.map(c => `<label class="role-chip ${kbCategoryFilter===c?'active':''}" data-kb-cat="${escapeAttr(c)}">${escapeHtml(c)}</label>`).join('')}
+        </div>` : ''}
+    </div>
+
+    ${editingArticleId ? articleForm() : ''}
+
+    ${list.length === 0 ? `
+      <div class="card empty">
+        <div class="empty-icon">${icon('book',20)}</div>
+        <div>${q || kbCategoryFilter ? 'Nothing matches that.' : 'Nothing saved yet. Paste in a policy or process to get started.'}</div>
+      </div>
+    ` : `
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${list.map(a => articleRow(a)).join('')}
+      </div>
+    `}
+  `;
+}
+
+function articleRow(a){
+  const open = expandedArticleId === a.id;
+  return `
+    <div class="card" style="padding:14px 16px;">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">
+        <div data-toggle-article="${a.id}" style="flex:1; cursor:pointer;">
+          <div style="font-weight:600; font-size:14.5px;">${escapeHtml(a.title || 'Untitled')}</div>
+          ${a.summary ? `<div class="subtle" style="font-size:13px; margin-top:3px;">${escapeHtml(a.summary)}</div>` : ''}
+          <div class="chip-row" style="margin-top:7px; gap:5px; align-items:center;">
+            ${a.category ? `<span class="tag-pill">${escapeHtml(a.category)}</span>` : ''}
+            ${(a.tags||[]).map(t => `<span class="tag-pill" style="background:var(--border); color:var(--muted);">${escapeHtml(t)}</span>`).join('')}
+            <span class="src-pill">${escapeHtml(a.source)}${a.sourceDetail ? ' · ' + escapeHtml(a.sourceDetail) : ''}</span>
+          </div>
+        </div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button data-edit-article="${a.id}" class="icon-btn" title="Edit">${icon('pencil',15)}</button>
+          <button data-delete-article="${a.id}" class="icon-btn danger" title="Delete">${icon('trash',15)}</button>
+        </div>
+      </div>
+      ${open ? `
+        <div style="border-top:1px solid var(--border); margin-top:11px; padding-top:11px;">
+          <div class="kb-content">${escapeHtml(a.content)}</div>
+          <p class="hint" style="margin-top:10px;">Added ${escapeHtml(a.createdDate||'')}${a.updatedDate && a.updatedDate!==a.createdDate ? ` · updated ${escapeHtml(a.updatedDate)}` : ''}</p>
+        </div>` : ''}
+    </div>
+  `;
+}
+
+function articleForm(){
+  const d = articleDraft || blankArticle();
+  const isNew = editingArticleId === 'new';
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:660px;">
+      <label class="section">${isNew ? 'Add article' : 'Edit article'}</label>
+      <div class="field"><label class="hint">Title *</label><input id="kb-title" value="${escapeAttr(d.title)}" placeholder="When an account transfer needs Exception Committee approval" /></div>
+      <div class="field"><label class="hint">Short summary</label><input id="kb-summary" value="${escapeAttr(d.summary)}" placeholder="One line you'd recognise later" /></div>
+      <div class="row2 field">
+        <div>
+          <label class="hint">Category</label>
+          <input id="kb-category" list="kb-cat-list" value="${escapeAttr(d.category)}" placeholder="Account Transfers" />
+          <datalist id="kb-cat-list">
+            ${Array.from(new Set(KB_CATEGORY_SUGGESTIONS.concat(kbCategories()))).map(c => `<option value="${escapeAttr(c)}"></option>`).join('')}
+          </datalist>
+        </div>
+        <div>
+          <label class="hint">Source *</label>
+          <select id="kb-source">
+            ${KB_SOURCES.map(sx => `<option value="${escapeAttr(sx)}" ${d.source===sx?'selected':''}>${sx}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="row2 field">
+        <div><label class="hint">Source detail</label><input id="kb-source-detail" value="${escapeAttr(d.sourceDetail)}" placeholder="Guru card name, who told you, policy number" /></div>
+        <div><label class="hint">Tags</label><input id="kb-tags" value="${escapeAttr((d.tags||[]).join(', '))}" placeholder="volume, rank, denial" /></div>
+      </div>
+      <div class="field">
+        <label class="hint">Information *</label>
+        <textarea id="kb-content" rows="10" placeholder="Paste the rule, process, requirements, or steps here.">${escapeHtml(d.content)}</textarea>
+        <p class="hint">Paste it as-is. Keep the wording from the original source so answers stay accurate.</p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button data-save-article class="btn btn-primary" style="padding:9px 20px;">Save</button>
+        <button data-cancel-article class="btn btn-ghost" style="padding:9px 16px;">Cancel</button>
+      </div>
     </div>
   `;
 }
@@ -1711,7 +2065,21 @@ function viewSender(){
 }
 
 function mergeIntoState(incoming){
-  let addedTemplates = 0, addedMembers = 0, addedRoles = 0;
+  let addedTemplates = 0, addedMembers = 0, addedRoles = 0, addedArticles = 0;
+
+  if (Array.isArray(incoming.kb)) {
+    if (!Array.isArray(state.kb)) state.kb = [];
+    incoming.kb.forEach(a => {
+      if (!a || !a.title) return;
+      const exists = state.kb.some(x => x.id === a.id || (x.title === a.title && x.content === a.content));
+      if (exists) return;
+      const copy = Object.assign({}, a);
+      if (!copy.id) copy.id = uid('kb');
+      if (!Array.isArray(copy.tags)) copy.tags = [];
+      state.kb.push(copy);
+      addedArticles++;
+    });
+  }
 
   // Roles first: templates reference roles by id, so a restored template is only
   // fully intact if its custom roles come back under their ORIGINAL ids.
@@ -1762,7 +2130,7 @@ function mergeIntoState(incoming){
       if (!state.folders.some(x => x.id===f.id || x.name===f.name)) state.folders.push(f);
     });
   }
-  return { addedTemplates, addedMembers, addedRoles };
+  return { addedTemplates, addedMembers, addedRoles, addedArticles };
 }
 
 // ---------------- Generate ----------------
@@ -2015,6 +2383,119 @@ function attachHandlers(){
     saveState();
   });
 
+  const runAskBtn = document.querySelector('[data-run-ask]');
+  if (runAskBtn) runAskBtn.onclick = () => { if (!askLoading) runAsk(); };
+
+  const clearAskBtn = document.querySelector('[data-clear-ask]');
+  if (clearAskBtn) clearAskBtn.onclick = () => {
+    askResult = null; askError = ''; askQuestion = ''; leadAnswerText = ''; render();
+  };
+
+  const copyLeadQBtn = document.querySelector('[data-copy-lead-question]');
+  if (copyLeadQBtn) copyLeadQBtn.onclick = () => {
+    navigator.clipboard.writeText(askResult?.suggestedQuestion || '').then(()=>showToast('Question copied'));
+  };
+
+  const saveLeadAnswerBtn = document.querySelector('[data-save-lead-answer]');
+  if (saveLeadAnswerBtn) saveLeadAnswerBtn.onmousedown = (e) => {
+    e.preventDefault();
+    const el = document.getElementById('lead-answer');
+    const answer = (el ? el.value : '').trim();
+    if (!answer) { showToast('Paste the answer first'); return; }
+    const q = askQuestion || 'Team lead answer';
+    state.kb.push(Object.assign(blankArticle(), {
+      id: uid('kb'),
+      title: q.length > 90 ? q.slice(0,90) + '…' : q,
+      summary: 'Answer from team lead',
+      content: `QUESTION:\n${q}\n\nANSWER:\n${answer}`,
+      category: 'Team Lead Answers',
+      source: 'Team Lead',
+      sourceDetail: `Asked ${todayKey()}`,
+      tags: [],
+      createdDate: todayKey(),
+      updatedDate: todayKey(),
+    }));
+    leadAnswerText = '';
+    askResult = null; askQuestion = '';
+    saveState(); render();
+    showToast('Saved — the Assistant can use this next time');
+  };
+
+  document.querySelectorAll('[data-goto-article]').forEach(el => el.onclick = () => {
+    expandedArticleId = el.getAttribute('data-goto-article');
+    kbSearchQuery = ''; kbCategoryFilter = '';
+    view = 'knowledge'; render();
+  });
+
+  const kbSearchEl = document.getElementById('kb-search');
+  if (kbSearchEl) kbSearchEl.oninput = () => {
+    kbSearchQuery = kbSearchEl.value;
+    const pos = kbSearchEl.selectionStart;
+    render();
+    const again = document.getElementById('kb-search');
+    if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+  };
+
+  document.querySelectorAll('[data-kb-cat]').forEach(el => el.onclick = () => {
+    kbCategoryFilter = el.getAttribute('data-kb-cat'); render();
+  });
+
+  document.querySelectorAll('[data-toggle-article]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-toggle-article');
+    expandedArticleId = (expandedArticleId === id) ? null : id;
+    render();
+  });
+
+  const newArticleBtn = document.querySelector('[data-new-article]');
+  if (newArticleBtn) newArticleBtn.onclick = () => {
+    editingArticleId = 'new'; articleDraft = blankArticle(); render();
+  };
+
+  document.querySelectorAll('[data-edit-article]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-edit-article');
+    const a = state.kb.find(x => x.id === id);
+    if (!a) return;
+    editingArticleId = id; articleDraft = Object.assign({}, a, { tags: (a.tags||[]).slice() }); render();
+  });
+
+  document.querySelectorAll('[data-delete-article]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-delete-article');
+    if (!confirm('Delete this article? This cannot be undone.')) return;
+    state.kb = state.kb.filter(x => x.id !== id);
+    saveState(); render();
+  });
+
+  const saveArticleBtn = document.querySelector('[data-save-article]');
+  if (saveArticleBtn) saveArticleBtn.onmousedown = (e) => {
+    e.preventDefault();
+    const title = document.getElementById('kb-title').value.trim();
+    const content = document.getElementById('kb-content').value.trim();
+    if (!title || !content) { showToast('Title and information are both needed'); return; }
+    const rec = {
+      title,
+      summary: document.getElementById('kb-summary').value.trim(),
+      content,
+      category: document.getElementById('kb-category').value.trim() || 'Uncategorized',
+      source: document.getElementById('kb-source').value,
+      sourceDetail: document.getElementById('kb-source-detail').value.trim(),
+      tags: document.getElementById('kb-tags').value.split(',').map(x=>x.trim()).filter(Boolean),
+      updatedDate: todayKey(),
+    };
+    if (editingArticleId === 'new') {
+      state.kb.push(Object.assign(blankArticle(), rec, { id: uid('kb'), createdDate: todayKey() }));
+    } else {
+      const i = state.kb.findIndex(x => x.id === editingArticleId);
+      if (i >= 0) state.kb[i] = Object.assign({}, state.kb[i], rec);
+    }
+    editingArticleId = null; articleDraft = null;
+    saveState(); render(); showToast('Saved to Knowledge Base');
+  };
+
+  const cancelArticleBtn = document.querySelector('[data-cancel-article]');
+  if (cancelArticleBtn) cancelArticleBtn.onmousedown = (e) => {
+    e.preventDefault(); editingArticleId = null; articleDraft = null; render();
+  };
+
   const taskSearchEl = document.getElementById('task-search');
   if (taskSearchEl) taskSearchEl.oninput = () => {
     taskSearchQuery = taskSearchEl.value;
@@ -2098,12 +2579,14 @@ function attachHandlers(){
     saveState(); render();
   });
 
+  // Saves silently: re-rendering here would destroy the adjacent delete button
+  // mid-click, because this change event fires on blur.
   document.querySelectorAll('[data-category-rename]').forEach(el => el.onchange = () => {
     const id = el.getAttribute('data-category-rename');
     const cat = state.categories.find(c=>c.id===id);
     if (!cat) return;
     cat.label = el.value.trim() || cat.label;
-    saveState(); render(); showToast('Category renamed');
+    saveState();
   });
 
   document.querySelectorAll('[data-category-delete]').forEach(el => el.onclick = () => {
@@ -2158,21 +2641,39 @@ function attachHandlers(){
     render();
   });
 
+  // Close on mousedown, not click: clicking Done blurs the date field, which
+  // fires its change event first. If that handler re-rendered, this button would
+  // be destroyed before the click landed and the panel would never close.
   const closeTaskEditorBtn = document.querySelector('[data-close-task-editor]');
-  if (closeTaskEditorBtn) closeTaskEditorBtn.onclick = (e) => { e.preventDefault(); editingTaskId = null; render(); };
+  if (closeTaskEditorBtn) closeTaskEditorBtn.onmousedown = (e) => {
+    e.preventDefault();
+    const panel = closeTaskEditorBtn.closest('.task-editor');
+    if (panel) {
+      const dueEl = panel.querySelector('[data-task-due]');
+      const waitEl = panel.querySelector('[data-task-waiting]');
+      const t = state.tasks.find(x => x.id === editingTaskId);
+      if (t) {
+        if (dueEl) t.dueDate = dueEl.value || null;
+        if (waitEl) t.waitingOn = waitEl.value;
+      }
+    }
+    editingTaskId = null;
+    saveState(); render();
+  };
 
+  // Persist as you change, but do not re-render while the panel is open.
   document.querySelectorAll('[data-task-due]').forEach(el => el.onchange = () => {
     const t = state.tasks.find(x => x.id === el.getAttribute('data-task-due'));
     if (!t) return;
     t.dueDate = el.value || null;
-    saveState(); render();
+    saveState();
   });
 
   document.querySelectorAll('[data-task-waiting]').forEach(el => el.onchange = () => {
     const t = state.tasks.find(x => x.id === el.getAttribute('data-task-waiting'));
     if (!t) return;
     t.waitingOn = el.value;
-    saveState(); render();
+    saveState();
   });
 
   const toggleTaskDetailBtn = document.querySelector('[data-toggle-task-detail]');
@@ -2399,9 +2900,9 @@ function attachHandlers(){
       let incoming;
       try { incoming = JSON.parse(reader.result); }
       catch(e){ showToast('That file could not be read'); return; }
-      const { addedTemplates, addedMembers, addedRoles } = mergeIntoState(incoming);
+      const { addedTemplates, addedMembers, addedRoles, addedArticles } = mergeIntoState(incoming);
       saveState(); render();
-      showToast(`Restored ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}, ${addedRoles} role${addedRoles===1?'':'s'}`);
+      showToast(`Restored ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}, ${addedRoles} role${addedRoles===1?'':'s'}, ${addedArticles} article${addedArticles===1?'':'s'}`);
     };
     reader.readAsText(file);
   };
@@ -2410,9 +2911,9 @@ function attachHandlers(){
   if (recoverLegacyBtn) recoverLegacyBtn.onclick = () => {
     const legacy = readLegacyLocalState();
     if (!legacy) { showToast('Nothing found to recover'); return; }
-    const { addedTemplates, addedMembers, addedRoles } = mergeIntoState(legacy);
+    const { addedTemplates, addedMembers, addedRoles, addedArticles } = mergeIntoState(legacy);
     saveState(); render();
-    showToast(`Recovered ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}, ${addedRoles} role${addedRoles===1?'':'s'}`);
+    showToast(`Recovered ${addedTemplates} template${addedTemplates===1?'':'s'}, ${addedMembers} member${addedMembers===1?'':'s'}, ${addedRoles} role${addedRoles===1?'':'s'}, ${addedArticles} article${addedArticles===1?'':'s'}`);
   };
 
   const memberSearchEl = document.getElementById('member-search');
