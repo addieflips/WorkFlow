@@ -156,6 +156,26 @@
   .goal-text{ font-size:14.5px; font-weight:600; margin-top:2px; }
   .goal-left{ font-size:11px; font-weight:700; background:#fff; color:var(--primary-dark); border-radius:999px; padding:3px 9px; white-space:nowrap; flex-shrink:0; }
   .goal-left-soon{ background:#FDECEA; color:#C13B30; }
+  .goal-notes{ font-size:12.5px; color:var(--primary-dark); opacity:.85; margin-top:3px; white-space:pre-wrap; }
+  .goal-check{ display:flex; align-items:center; flex-shrink:0; margin-top:2px; cursor:pointer; }
+  .goal-check input{ width:17px; height:17px; }
+  .goal-struck{ text-decoration:line-through; opacity:.6; }
+  .goal-done{ opacity:.85; }
+  .goal-step{ width:26px; height:26px; border:1px solid var(--primary); background:#fff; color:var(--primary-dark); border-radius:8px; font-size:15px; line-height:1; cursor:pointer; flex-shrink:0; }
+  .goal-step:hover{ background:var(--primary); color:#fff; }
+  .goal-num{ width:62px; text-align:center; font-weight:700; padding:5px 6px; font-size:13.5px; }
+  .goal-of{ font-size:12.5px; color:var(--primary-dark); white-space:nowrap; }
+  .goal-bar{ flex:1; height:6px; border-radius:4px; background:#fff; overflow:hidden; min-width:60px; }
+  .goal-bar-fill{ height:100%; background:var(--primary); }
+  .goal-bar-hit{ background:#2F7A4F; }
+  .active-tag{ display:inline-flex; align-items:center; gap:5px; font-size:12.5px; font-weight:600; background:var(--primary-soft); color:var(--primary-dark); border-radius:999px; padding:5px 6px 5px 11px; }
+  .active-tag-x{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border:none; border-radius:50%; background:none; color:var(--primary-dark); cursor:pointer; padding:0; }
+  .active-tag-x:hover{ background:#fff; }
+  .tag-suggest{ border:1px solid var(--border); border-radius:10px; padding:5px; margin-top:8px; max-width:330px; background:#fff; }
+  .tag-suggest-head{ font-size:11.5px; color:var(--muted); padding:4px 8px; }
+  .tag-suggest-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13.5px; padding:6px 8px; border-radius:7px; cursor:pointer; }
+  .tag-suggest-row:hover{ background:var(--primary-soft); color:var(--primary-dark); }
+  .tag-suggest-row.active{ background:var(--primary-soft); color:var(--primary-dark); font-weight:600; }
   .conf-pill{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:999px; padding:2px 9px; }
   .conf-high{ background:#EAF6EF; color:#2F7A4F; }
   .conf-med{ background:#FEF6E7; color:#A8730F; }
@@ -198,7 +218,7 @@ const DEFAULT_STATE = {
     { id: 'c_transfers', label: 'Account Transfers', featuredStat: 'remaining', noteText: '' },
   ],
   kb: [],            // knowledge base articles
-  teamGoal: null,    // { text, startDate, endDate }  endDate null = no end
+  teamGoal: null,    // { text, notes, target, progress, done, duration, startDate, endDate, repeat }
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
   tasks: [],         // { id, text, done, createdDate, completedDate }
 };
@@ -334,6 +354,16 @@ async function loadState(){
     if (t.waitingOn === undefined) t.waitingOn = '';
   });
   if (state.teamGoal === undefined) state.teamGoal = null;
+  if (state.teamGoal) {
+    const g = state.teamGoal;
+    if (g.notes === undefined) g.notes = '';
+    if (g.target === undefined) g.target = null;
+    if (g.progress === undefined) g.progress = 0;
+    if (g.done === undefined) g.done = false;
+    if (g.duration === undefined) g.duration = 'week';
+    if (g.repeat === undefined) g.repeat = true;
+    rollGoalIfExpired();
+  }
   if (!Array.isArray(state.kb)) state.kb = [];
   state.kb.forEach(a => {
     if (!Array.isArray(a.tags)) a.tags = [];
@@ -408,6 +438,8 @@ function icon(name, size){
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2.3"/><path d="M3 9.5h18M8 3v4M16 3v4"/>',
     flag: '<path d="M5 21V4M5 4.5h11l-2 3.5 2 3.5H5"/>',
+    tag: '<path d="M3 12V4.5A1.5 1.5 0 014.5 3H12l9 9-7.5 7.5L3 12z"/><circle cx="7.5" cy="7.5" r="1.2"/>',
+    close: '<path d="M6 6l12 12M18 6L6 18"/>',
     book: '<path d="M4 4.5A1.5 1.5 0 015.5 3H19v18H5.5A1.5 1.5 0 014 19.5v-15z"/><path d="M4 17.5A1.5 1.5 0 015.5 16H19"/>',
   };
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${map[name]||''}</svg>`;
@@ -546,6 +578,7 @@ function sidebarHtml(){
       }).join('')}
 
       <div class="nav-bottom">
+        <div data-nav="triage" class="nav-item ${view==='triage'?'active':''}">${icon('inbox',15)}<span class="lbl">Triage email</span></div>
         <div data-nav="assistant" class="nav-item ${view==='assistant'?'active':''}">${icon('sparkle',15)}<span class="lbl">Assistant</span></div>
         <div data-nav="knowledge" class="nav-item ${view==='knowledge'?'active':''}">${icon('book',15)}<span class="lbl">Knowledge</span></div>
         <div data-nav="calendar" class="nav-item ${view==='calendar'?'active':''}">${icon('calendar',15)}<span class="lbl">Calendar</span></div>
@@ -560,6 +593,7 @@ function sidebarHtml(){
 
 function mainBody(){
   if (view === 'home') return viewHome();
+  if (view === 'triage') return viewTriage();
   if (view === 'assistant') return viewAssistant();
   if (view === 'knowledge') return viewKnowledge();
   if (view === 'calendar') return viewCalendar();
@@ -725,6 +759,23 @@ function goalEndDate(kind, fromKey){
   return keyFromDate(d);
 }
 
+// A repeating goal starts a fresh period when its end date passes: the wording
+// and target carry over, the progress and tick do not.
+function rollGoalIfExpired(){
+  const g = state.teamGoal;
+  if (!g || !g.endDate || !g.repeat) return false;
+  if (g.endDate >= todayKey()) return false;
+  let guard = 0;
+  while (g.endDate < todayKey() && guard++ < 60) {
+    g.startDate = keyFromDate(new Date(dateFromKey(g.endDate).getTime() + 86400000));
+    g.endDate = goalEndDate(g.duration || 'week', g.startDate);
+    if (!g.endDate) break;
+  }
+  g.progress = 0;
+  g.done = false;
+  return true;
+}
+
 function goalDaysLeft(g){
   if (!g || !g.endDate) return null;
   const today = dateFromKey(todayKey());
@@ -741,20 +792,34 @@ function goalPanel(){
   const g = state.teamGoal;
 
   if (editingGoal) {
-    const cur = g || { text:'', endDate:null };
+    const cur = g || { text:'', notes:'', target:null, duration:'week', repeat:true };
     return `
       <div class="card goal-card" style="margin-bottom:14px;">
         <label class="section">Team goal</label>
-        <input id="goal-text" value="${escapeAttr(cur.text||'')}" placeholder="e.g. Clear the exceptions backlog before Friday" style="margin-bottom:8px;" />
+        <input id="goal-text" value="${escapeAttr(cur.text||'')}" placeholder="e.g. Clear the exceptions backlog" style="margin-bottom:8px;" />
+        <div class="row2" style="gap:8px; margin-bottom:8px;">
+          <div>
+            <label class="hint" style="display:block; margin-bottom:3px;">Target number (optional)</label>
+            <input id="goal-target" type="number" min="0" value="${cur.target != null ? cur.target : ''}" placeholder="e.g. 50" />
+          </div>
+          <div>
+            <label class="hint" style="display:block; margin-bottom:3px;">Lasts</label>
+            <select id="goal-duration">
+              ${GOAL_DURATIONS.map(o => `<option value="${o.val}" ${(cur.duration||'week')===o.val?'selected':''}>${o.label}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <label class="hint" style="display:block; margin-bottom:3px;">Notes (optional)</label>
+        <textarea id="goal-notes" rows="2" style="margin-bottom:8px;" placeholder="Anything worth remembering about this goal">${escapeHtml(cur.notes||'')}</textarea>
+        <label class="card-task-row" style="margin-bottom:10px;">
+          <input type="checkbox" id="goal-repeat" ${cur.repeat!==false?'checked':''} />
+          <span style="font-size:12.5px;">Start fresh each period (resets the count and tick)</span>
+        </label>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <select id="goal-duration" style="max-width:170px;">
-            ${GOAL_DURATIONS.map(o => `<option value="${o.val}">${o.label}</option>`).join('')}
-          </select>
           <button data-save-goal class="btn btn-primary" style="padding:8px 16px;">Save goal</button>
           <button data-cancel-goal class="btn btn-ghost" style="padding:8px 14px;">Cancel</button>
           ${g ? `<button data-clear-goal class="btn btn-ghost" style="padding:8px 14px; color:#C13B30;">Remove</button>` : ''}
         </div>
-        <p class="hint" style="margin-top:8px;">It shows at the top of Home until it runs out, then disappears on its own.</p>
       </div>
     `;
   }
@@ -769,17 +834,35 @@ function goalPanel(){
     : left === 1 ? '1 day left'
     : `${left} days left`;
 
+  const hasTarget = g.target != null && g.target > 0;
+  const prog = g.progress || 0;
+  const pct = hasTarget ? Math.min(100, Math.round((prog / g.target) * 100)) : 0;
+  const hit = hasTarget && prog >= g.target;
+
   return `
-    <div class="card goal-card" style="margin-bottom:14px;">
+    <div class="card goal-card${g.done ? ' goal-done' : ''}" style="margin-bottom:14px;">
       <div style="display:flex; align-items:flex-start; gap:10px;">
-        <span class="goal-icon">${icon('flag',15)}</span>
+        <label class="goal-check" title="${g.done ? 'Mark not done' : 'Mark complete'}">
+          <input type="checkbox" data-goal-done ${g.done?'checked':''} />
+        </label>
         <div style="flex:1;">
           <div class="goal-label">Team goal</div>
-          <div class="goal-text">${escapeHtml(g.text)}</div>
+          <div class="goal-text${g.done?' goal-struck':''}">${escapeHtml(g.text)}</div>
+          ${g.notes ? `<div class="goal-notes">${escapeHtml(g.notes)}</div>` : ''}
         </div>
         <span class="goal-left${left !== null && left <= 1 ? ' goal-left-soon' : ''}">${leftLabel}</span>
         <button data-edit-goal class="icon-btn" title="Edit goal" style="width:26px;height:26px;flex-shrink:0;">${icon('pencil',12)}</button>
       </div>
+
+      ${hasTarget ? `
+        <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+          <button data-goal-minus class="goal-step" title="Subtract one">−</button>
+          <input type="number" min="0" data-goal-progress value="${prog}" class="goal-num" />
+          <span class="goal-of">of ${g.target}${hit ? ' · reached' : ''}</span>
+          <button data-goal-plus class="goal-step" title="Add one">+</button>
+          <div class="goal-bar"><div class="goal-bar-fill${hit?' goal-bar-hit':''}" style="width:${pct}%;"></div></div>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -1302,7 +1385,7 @@ function viewAssistant(){
     ` : `
       <div class="card" style="margin-bottom:16px;">
         <label class="section">Ask a question</label>
-        <p class="hint" style="margin:3px 0 8px;">Answered only from your ${state.kb.length} saved article${state.kb.length===1?'':'s'} — never from anything else.</p>
+        <p class="hint" style="margin:3px 0 8px;">Answered only from your ${state.kb.length} saved article${state.kb.length===1?'':'s'} — never from anything else. The most relevant ones are consulted for each question.</p>
         <textarea id="ask-input" rows="3" placeholder="Can this account transfer be approved if the member has already had an enroller change?">${escapeHtml(askQuestion)}</textarea>
         <div style="display:flex; gap:8px; margin-top:8px;">
           <button data-run-ask class="btn btn-primary" style="padding:9px 18px;" ${askLoading?'disabled':''}>${askLoading ? 'Checking…' : 'Ask'}</button>
@@ -1373,12 +1456,78 @@ function askResultPanel(){
   `;
 }
 
+// Pull the meaningful words out of a question, ignoring filler.
+const ASK_STOPWORDS = ['the','a','an','and','or','of','to','for','in','on','is','are','was','were','be','been','can','could','do','does','did','if','it','this','that','with','what','when','where','who','why','how','we','i','you','they','them','their','my','our','at','as','by','from','but','not','no','yes','has','have','had','would','should','will','shall','may','might','must','about','into','than','then','there','these','those','so','up','out','get','got','need','needs','okay','ok','please'];
+
+function askKeywords(q){
+  return Array.from(new Set(
+    (q||'').toLowerCase().split(/[^a-z0-9]+/)
+      .filter(w => w.length > 2 && !ASK_STOPWORDS.includes(w))
+      .map(stemWord)
+      .filter(Boolean)
+  ));
+}
+
+// Score an article against the question. Title, summary, category and tags are
+// weighted far above body text, so an article ABOUT the topic beats one that
+// merely mentions the word once.
+function scoreArticle(a, keys){
+  if (!keys.length) return 0;
+  const head = [a.title, a.summary, a.category, (a.tags||[]).join(' ')].join(' ').toLowerCase();
+  const body = (a.content||'').toLowerCase();
+  let score = 0;
+  keys.forEach(k => {
+    if (head.includes(k)) score += 10;
+    if (body.includes(k)) score += 1;
+  });
+  // Superseding/updated articles should surface with the rules they replace.
+  if (/supersed|updated|policy update/i.test(a.title + ' ' + a.summary)) score += 3;
+  return score;
+}
+
+const ASK_MAX_ARTICLES = 20;
+
+function articlesForQuestion(q){
+  const keys = askKeywords(q);
+  const scored = state.kb.map(a => ({ a, s: scoreArticle(a, keys) }))
+    .filter(x => x.s > 0)
+    .sort((x,y) => y.s - x.s);
+  if (!scored.length) return state.kb.slice(0, ASK_MAX_ARTICLES);
+  return scored.slice(0, ASK_MAX_ARTICLES).map(x => x.a);
+}
+
+// Models sometimes wrap JSON in prose or fences. Pull out the first balanced
+// object rather than trusting the whole reply to parse.
+function extractJson(raw){
+  let t = (raw || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+  try { return JSON.parse(t); } catch(e) {}
+  const start = t.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const ch = t[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\') { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(t.slice(start, i+1)); } catch(e) { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 async function runAsk(){
   const q = (document.getElementById('ask-input')?.value || '').trim();
   if (!q) { showToast('Type a question first'); return; }
   askQuestion = q; askError = ''; askResult = null; askLoading = true; render();
 
-  const articles = state.kb.map(a => [
+  const relevant = articlesForQuestion(q);
+  const articles = relevant.map(a => [
     "[" + a.id + "] TITLE: " + a.title,
     "CATEGORY: " + a.category,
     "SOURCE: " + a.source + (a.sourceDetail ? " (" + a.sourceDetail + ")" : ""),
@@ -1415,9 +1564,11 @@ ${articles}`;
     });
     const data = await resp.json().catch(()=>({}));
     if (!resp.ok) throw new Error(data.error || ('Request failed (' + resp.status + ')'));
-    let parsed;
-    try { parsed = JSON.parse((data.result||'').replace(/```json|```/g,'').trim()); }
-    catch(e){ throw new Error('Could not read the answer.'); }
+    const parsed = extractJson(data.result);
+    if (!parsed) {
+      console.error('Unparseable answer:', data.result);
+      throw new Error('Could not read the answer. The reply was not valid JSON — see the browser console for what came back.');
+    }
 
     // Only keep citations that point at articles that actually exist.
     const validIds = (parsed.sourceIds || []).filter(id => state.kb.some(a => a.id === id));
@@ -1433,6 +1584,199 @@ ${articles}`;
   } catch(e){
     askLoading = false;
     askError = e.message || 'Could not get an answer.';
+    render();
+  }
+}
+
+// ---------------- Triage an incoming email ----------------
+let triageText = '';
+let triageLoading = false;
+let triageError = '';
+let triageResult = null;
+
+function viewTriage(){
+  return `
+    <div class="page-header"><div class="page-title">Triage an email</div></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Paste the email</label>
+      <p class="hint" style="margin:3px 0 8px;">Reads it against your ${state.kb.length} knowledge article${state.kb.length===1?'':'s'} and ${state.templates.length} template${state.templates.length===1?'':'s'}. It suggests — you decide.</p>
+      <textarea id="triage-input" rows="9" placeholder="Paste the member's email here, including any IDs and names.">${escapeHtml(triageText)}</textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button data-run-triage class="btn btn-primary" style="padding:9px 18px;" ${triageLoading?'disabled':''}>${triageLoading ? 'Reading…' : 'Take a look'}</button>
+        ${triageResult ? `<button data-clear-triage class="btn btn-ghost" style="padding:9px 16px;">Clear</button>` : ''}
+      </div>
+      ${triageError ? `<p style="color:#D0453A; font-size:13px; margin:10px 0 0;">${escapeHtml(triageError)}</p>` : ''}
+    </div>
+
+    ${triageResult ? triageResultPanel() : ''}
+  `;
+}
+
+function triageResultPanel(){
+  const r = triageResult;
+  const sources = (r.sourceIds||[]).map(id => state.kb.find(a=>a.id===id)).filter(Boolean);
+  const tpls = (r.templateIds||[]).map(id => state.templates.find(t=>t.id===id)).filter(Boolean);
+  const found = r.members || [];
+
+  return `
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+        <label class="section" style="margin:0;">What this is</label>
+        ${r.confidence ? confidencePill(r.confidence) : ''}
+      </div>
+      <p style="font-size:15px; font-weight:600; margin:0 0 4px;">${escapeHtml(r.requestType || 'Unclear')}</p>
+      ${r.summary ? `<p style="font-size:13.5px; line-height:1.6; color:var(--muted); margin:0;">${escapeHtml(r.summary)}</p>` : ''}
+    </div>
+
+    ${found.length ? `
+      <div class="card" style="margin-bottom:14px;">
+        <label class="section">Members mentioned</label>
+        <div style="margin-top:8px;">
+          ${found.map(m => {
+            const known = m.id ? state.members[m.id] : null;
+            return `
+            <div class="src-row">
+              <div style="flex:1;">
+                <div style="font-size:13.5px; font-weight:600;">${escapeHtml(m.name || (known ? known.firstName+' '+known.lastName : 'Unnamed'))}${m.id ? ` <span class="subtle" style="font-weight:400;">#${escapeHtml(m.id)}</span>` : ''}</div>
+                <div class="search-meta">${escapeHtml(m.role || 'mentioned')}${known ? ' · in your Members list' : (m.id ? ' · not saved yet' : '')}</div>
+              </div>
+              ${m.id && !known ? `<button data-triage-add-member="${escapeAttr(m.id)}|${escapeAttr(m.name||'')}" class="btn btn-ghost" style="padding:5px 11px; font-size:12.5px;">Save</button>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
+
+    ${(r.missing||[]).length ? `
+      <div class="card" style="margin-bottom:14px; border-color:#F2D398; background:#FFFBF2;">
+        <label class="section" style="color:#A8730F;">Missing information</label>
+        <div style="margin-top:6px;">
+          ${(r.missing||[]).map(x => `<p style="font-size:13.5px; margin:0 0 4px;">— ${escapeHtml(x)}</p>`).join('')}
+        </div>
+      </div>` : ''}
+
+    <div class="card" style="margin-bottom:14px;">
+      <label class="section">What the rules say</label>
+      ${r.rules ? `<p style="font-size:14px; line-height:1.65; margin:8px 0 0;">${escapeHtml(r.rules)}</p>`
+                : `<p class="hint" style="margin:8px 0 0;">Nothing in your knowledge base clearly covers this.</p>`}
+      ${r.likelyOutcome ? `
+        <div style="border-top:1px solid var(--border); margin-top:12px; padding-top:11px;">
+          <label class="hint" style="display:block; margin-bottom:4px; font-weight:700;">Likely outcome</label>
+          <p style="font-size:14px; line-height:1.6; margin:0;">${escapeHtml(r.likelyOutcome)}</p>
+        </div>` : ''}
+      ${sources.length ? `
+        <div style="border-top:1px solid var(--border); margin-top:12px; padding-top:11px;">
+          <label class="hint" style="display:block; margin-bottom:6px; font-weight:700;">Based on</label>
+          ${sources.map(a => `
+            <div class="src-row">
+              <div style="flex:1;">
+                <div style="font-size:13.5px; font-weight:600;">${escapeHtml(a.title)}</div>
+                <div class="search-meta">${escapeHtml(a.source)}${a.sourceDetail ? ' · '+escapeHtml(a.sourceDetail) : ''}</div>
+              </div>
+              <button data-goto-article="${a.id}" class="icon-btn" title="Open article">${icon('book',14)}</button>
+            </div>`).join('')}
+        </div>` : ''}
+      <p class="hint" style="margin-top:11px;">This is a suggestion drawn from what you saved. Check the sources before acting.</p>
+    </div>
+
+    ${tpls.length ? `
+      <div class="card">
+        <label class="section">Templates that might fit</label>
+        <div style="margin-top:8px;">
+          ${tpls.map(t => `
+            <div class="src-row">
+              <div style="flex:1;">
+                <div style="font-size:13.5px; font-weight:600;">${escapeHtml(t.title)}</div>
+                <div class="search-meta">${(t.tags||[]).slice(0,4).map(x=>escapeHtml(x)).join(' · ')}</div>
+              </div>
+              <button data-triage-generate="${t.id}" class="btn btn-primary" style="padding:5px 12px; font-size:12.5px; white-space:nowrap;">${icon('wand',13)} Use</button>
+            </div>`).join('')}
+        </div>
+        <p class="hint" style="margin-top:10px;">Using a template carries over any member IDs found above.</p>
+      </div>` : ''}
+  `;
+}
+
+async function runTriage(){
+  const text = (document.getElementById('triage-input')?.value || '').trim();
+  if (!text) { showToast('Paste the email first'); return; }
+  triageText = text; triageError = ''; triageResult = null; triageLoading = true; render();
+
+  const relevant = articlesForQuestion(text);
+  const articles = relevant.map(a => [
+    "[" + a.id + "] TITLE: " + a.title,
+    "CATEGORY: " + a.category,
+    "SOURCE: " + a.source + (a.sourceDetail ? " (" + a.sourceDetail + ")" : ""),
+    "CONTENT:",
+    a.content
+  ].join("\n")).join("\n\n---\n\n");
+
+  const tplList = state.templates.map(t =>
+    "[" + t.id + "] " + t.title + (t.tags && t.tags.length ? "  (tags: " + t.tags.join(', ') + ")" : "")
+  ).join("\n");
+
+  const instruction = `You are helping a doTERRA Placements agent triage an incoming member email.
+
+Use ONLY the reference articles below to state rules. Do not invent policy. If the
+articles do not cover something, say so rather than guessing.
+
+Do these things:
+1. Identify what kind of request this is (e.g. sponsor change, enroller change,
+   account transfer, swap, duplicate account, exception application, termination).
+2. Summarise what the member is actually asking for, in one or two sentences.
+3. Extract every member mentioned: their name, their member ID if given, and what
+   role they play (moving member, transferor, transferee, new sponsor, enroller,
+   Member A, Member B, submitter).
+4. List any information that is MISSING and would be needed to process this.
+5. State what the rules say, citing the article ids you used.
+6. Give the likely outcome and why - approve, deny, needs more information, or
+   escalate. Be honest if it is genuinely unclear.
+7. Suggest up to 3 templates from the list that fit this situation.
+
+Set confidence to "high", "medium" or "low" based on how well the articles cover
+this situation.
+
+Return ONLY valid JSON, no markdown fences, in exactly this shape:
+{"requestType":"...","summary":"...","members":[{"name":"...","id":"...","role":"..."}],"missing":["..."],"rules":"...","likelyOutcome":"...","sourceIds":["kb_x"],"templateIds":["tpl_x"],"confidence":"medium"}
+
+THE EMAIL:
+${text}
+
+AVAILABLE TEMPLATES:
+${tplList}
+
+REFERENCE ARTICLES:
+${articles}`;
+
+  try {
+    const resp = await fetch('/.netlify/functions/combine', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ instruction }),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if (!resp.ok) throw new Error(data.error || ('Request failed (' + resp.status + ')'));
+    const parsed = extractJson(data.result);
+    if (!parsed) {
+      console.error('Unparseable triage:', data.result);
+      throw new Error('Could not read the result — see the browser console for what came back.');
+    }
+    triageResult = {
+      requestType: parsed.requestType || '',
+      summary: parsed.summary || '',
+      members: Array.isArray(parsed.members) ? parsed.members : [],
+      missing: Array.isArray(parsed.missing) ? parsed.missing : [],
+      rules: parsed.rules || '',
+      likelyOutcome: parsed.likelyOutcome || '',
+      // never trust ids that do not exist
+      sourceIds: (parsed.sourceIds||[]).filter(id => state.kb.some(a=>a.id===id)),
+      templateIds: (parsed.templateIds||[]).filter(id => state.templates.some(t=>t.id===id)),
+      confidence: parsed.confidence || 'low',
+    };
+    triageLoading = false; render();
+  } catch(e){
+    triageLoading = false;
+    triageError = e.message || 'Could not read that email.';
     render();
   }
 }
@@ -1685,6 +2029,21 @@ function allTags(){
   return Object.keys(set).sort();
 }
 
+// Tag suggestions matching what has been typed, with how many templates each
+// covers in the folder currently being viewed.
+function tagSuggestions(q){
+  if (!q) return [];
+  const inScope = state.templates.filter(t => selectedFolderId ? t.folderId===selectedFolderId : true);
+  const counts = {};
+  inScope.forEach(t => (t.tags||[]).forEach(tag => {
+    if (tag.toLowerCase().includes(q)) counts[tag] = (counts[tag]||0) + 1;
+  }));
+  return Object.keys(counts)
+    .map(tag => ({ tag, count: counts[tag] }))
+    .sort((a,b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    .slice(0, 6);
+}
+
 function templateMatches(t, q, tagFilter){
   if (tagFilter && !(t.tags||[]).includes(tagFilter)) return false;
   if (!q) return true;
@@ -1698,25 +2057,40 @@ function viewTemplates(){
   const list = state.templates
     .filter(t => selectedFolderId ? t.folderId===selectedFolderId : true)
     .filter(t => templateMatches(t, q, templateTagFilter));
-  const tags = allTags();
+  const suggestions = tagSuggestions(q);
 
   return `
     <div class="page-header">
-      <div class="page-title">${folder ? escapeHtml(folder.name) : 'All templates'}</div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="page-title">${folder ? escapeHtml(folder.name) : 'All templates'}</div>
+        ${folder ? `
+          <button data-rename-folder="${folder.id}" class="icon-btn" title="Rename folder" style="width:26px;height:26px;">${icon('pencil',12)}</button>
+          <button data-delete-folder="${folder.id}" class="icon-btn danger" title="Delete folder" style="width:26px;height:26px;">${icon('trash',12)}</button>
+        ` : ''}
+      </div>
       <div style="display:flex; gap:8px;">
         <button data-toggle-combine class="btn ${combineMode?'btn-primary':'btn-ghost'}" style="padding:8px 14px;">${icon('copy',15)} ${combineMode ? 'Cancel combine' : 'Combine'}</button>
         <button data-new-template class="btn btn-primary" style="padding:8px 14px;">${icon('plus',15)} New template</button>
       </div>
     </div>
 
-    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
-      <input id="template-search" placeholder="Search name, subject, body, or tag" value="${escapeAttr(templateSearchQuery)}" style="max-width:300px;" />
-      ${tags.length ? `
-        <div class="chip-row">
-          <label class="role-chip ${!templateTagFilter?'active':''}" data-tag-filter="">All</label>
-          ${tags.map(tag => `<label class="role-chip ${templateTagFilter===tag?'active':''}" data-tag-filter="${escapeAttr(tag)}">${escapeHtml(tag)}</label>`).join('')}
-        </div>
-      ` : ''}
+    <div style="margin-bottom:12px;">
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input id="template-search" placeholder="Search name, subject, body, or tag" value="${escapeAttr(templateSearchQuery)}" style="max-width:300px;" />
+        ${templateTagFilter ? `
+          <span class="active-tag">${icon('tag',12)}${escapeHtml(templateTagFilter)}
+            <button data-tag-filter="" class="active-tag-x" title="Clear tag filter">${icon('close',11)}</button>
+          </span>` : ''}
+      </div>
+      ${suggestions.length ? `
+        <div class="tag-suggest">
+          <div class="tag-suggest-head">Tags matching "${escapeHtml(templateSearchQuery.trim())}"</div>
+          ${suggestions.map(sx => `
+            <div data-tag-filter="${escapeAttr(sx.tag)}" class="tag-suggest-row${templateTagFilter===sx.tag?' active':''}">
+              <span>${escapeHtml(sx.tag)}</span>
+              <span class="subtle" style="font-size:12.5px;">${sx.count} template${sx.count===1?'':'s'}</span>
+            </div>`).join('')}
+        </div>` : ''}
     </div>
 
     ${combineMode ? `
@@ -2500,6 +2874,57 @@ function attachHandlers(){
     saveState();
   });
 
+  const runTriageBtn = document.querySelector('[data-run-triage]');
+  if (runTriageBtn) runTriageBtn.onclick = () => { if (!triageLoading) runTriage(); };
+
+  const clearTriageBtn = document.querySelector('[data-clear-triage]');
+  if (clearTriageBtn) clearTriageBtn.onclick = () => {
+    triageResult = null; triageError = ''; triageText = ''; render();
+  };
+
+  document.querySelectorAll('[data-triage-add-member]').forEach(el => el.onclick = () => {
+    const [id, name] = el.getAttribute('data-triage-add-member').split('|');
+    if (!id || state.members[id]) return;
+    const parts = (name||'').trim().split(/\s+/).filter(Boolean);
+    state.members[id] = Object.assign(blankMember(id), {
+      firstName: parts[0] || '',
+      lastName: parts.slice(1).join(' '),
+    });
+    saveState(); render(); showToast('Member saved');
+  });
+
+  document.querySelectorAll('[data-triage-generate]').forEach(el => el.onclick = () => {
+    const tplId = el.getAttribute('data-triage-generate');
+    const t = state.templates.find(x => x.id === tplId);
+    if (!t) return;
+    generatingTemplateId = tplId;
+    genFieldValues = {}; genOutput=''; genSubject=''; genError='';
+    genLanguage = state.lastLanguage || 'English (no translation)';
+
+    // Carry any member IDs the triage found into the matching role fields.
+    const found = (triageResult && triageResult.members) || [];
+    t.requiredRoleIds.forEach(roleId => {
+      const role = state.roles.find(r => r.id === roleId);
+      if (!role) return;
+      const wanted = role.label.toLowerCase();
+      const hit = found.find(m => m.id && (m.role||'').toLowerCase().includes(wanted.split(' ')[0]));
+      if (hit) {
+        genFieldValues[roleId+'_memberid'] = hit.id;
+        const known = state.members[hit.id];
+        if (known) {
+          genFieldValues[roleId+'_firstname'] = known.firstName;
+          genFieldValues[roleId+'_lastname'] = known.lastName;
+          genFieldValues[roleId+'_email'] = known.email;
+        } else if (hit.name) {
+          const parts = hit.name.trim().split(/\s+/).filter(Boolean);
+          genFieldValues[roleId+'_firstname'] = parts[0] || '';
+          genFieldValues[roleId+'_lastname'] = parts.slice(1).join(' ');
+        }
+      }
+    });
+    view = 'generate'; render();
+  });
+
   const runAskBtn = document.querySelector('[data-run-ask]');
   if (runAskBtn) runAskBtn.onclick = () => { if (!askLoading) runAsk(); };
 
@@ -2631,10 +3056,48 @@ function attachHandlers(){
     const text = (document.getElementById('goal-text')?.value || '').trim();
     if (!text) { showToast('Type the goal first'); return; }
     const kind = document.getElementById('goal-duration')?.value || 'week';
-    const start = todayKey();
-    state.teamGoal = { text, startDate: start, endDate: goalEndDate(kind, start) };
+    const rawTarget = (document.getElementById('goal-target')?.value || '').trim();
+    const target = rawTarget === '' ? null : Math.max(0, parseInt(rawTarget, 10) || 0);
+    const notes = (document.getElementById('goal-notes')?.value || '').trim();
+    const repeat = !!document.getElementById('goal-repeat')?.checked;
+    const prev = state.teamGoal;
+    const start = (prev && prev.startDate) ? prev.startDate : todayKey();
+    state.teamGoal = {
+      text, notes, target, duration: kind, repeat,
+      progress: prev ? (prev.progress || 0) : 0,
+      done: prev ? !!prev.done : false,
+      startDate: start,
+      endDate: goalEndDate(kind, start),
+    };
     editingGoal = false;
     saveState(); render(); showToast('Team goal set');
+  };
+
+  const goalDoneEl = document.querySelector('[data-goal-done]');
+  if (goalDoneEl) goalDoneEl.onchange = () => {
+    if (!state.teamGoal) return;
+    state.teamGoal.done = goalDoneEl.checked;
+    saveState(); render();
+    if (goalDoneEl.checked) showToast('Goal marked complete');
+  };
+
+  const bumpGoal = (delta) => {
+    if (!state.teamGoal) return;
+    const t = state.teamGoal;
+    t.progress = Math.max(0, (t.progress || 0) + delta);
+    if (t.target && t.progress >= t.target && !t.done) t.done = true;
+    saveState(); render();
+  };
+  const goalPlus = document.querySelector('[data-goal-plus]');
+  if (goalPlus) goalPlus.onclick = () => bumpGoal(1);
+  const goalMinus = document.querySelector('[data-goal-minus]');
+  if (goalMinus) goalMinus.onclick = () => bumpGoal(-1);
+
+  const goalProgEl = document.querySelector('[data-goal-progress]');
+  if (goalProgEl) goalProgEl.onchange = () => {
+    if (!state.teamGoal) return;
+    state.teamGoal.progress = Math.max(0, parseInt(goalProgEl.value, 10) || 0);
+    saveState(); render();
   };
 
   const gotoCardBtn = document.querySelector('[data-goto-card]');
@@ -2854,6 +3317,34 @@ function attachHandlers(){
     view = 'templates';
     render();
   });
+
+  const renameFolderBtn = document.querySelector('[data-rename-folder]');
+  if (renameFolderBtn) renameFolderBtn.onclick = () => {
+    const id = renameFolderBtn.getAttribute('data-rename-folder');
+    const f = state.folders.find(x => x.id === id);
+    if (!f) return;
+    const name = prompt('Folder name:', f.name);
+    if (!name || !name.trim()) return;
+    f.name = name.trim();
+    saveState(); render(); showToast('Folder renamed');
+  };
+
+  const deleteFolderBtn = document.querySelector('[data-delete-folder]');
+  if (deleteFolderBtn) deleteFolderBtn.onclick = () => {
+    const id = deleteFolderBtn.getAttribute('data-delete-folder');
+    const f = state.folders.find(x => x.id === id);
+    if (!f) return;
+    const inFolder = state.templates.filter(t => t.folderId === id);
+    const msg = inFolder.length
+      ? `Delete the folder "${f.name}"?\n\nIts ${inFolder.length} template${inFolder.length===1?'':'s'} will NOT be deleted - they move to All templates with no folder.`
+      : `Delete the empty folder "${f.name}"?`;
+    if (!confirm(msg)) return;
+    state.folders = state.folders.filter(x => x.id !== id);
+    state.templates.forEach(t => { if (t.folderId === id) t.folderId = ''; });
+    selectedFolderId = null;
+    saveState(); render();
+    showToast(inFolder.length ? `Folder deleted, ${inFolder.length} template${inFolder.length===1?'':'s'} kept` : 'Folder deleted');
+  };
 
   const addFolderBtn = document.querySelector('[data-add-folder]');
   if (addFolderBtn) addFolderBtn.onclick = () => {
