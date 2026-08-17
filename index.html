@@ -196,12 +196,26 @@
   .conf-med{ background:#FEF6E7; color:#A8730F; }
   .conf-low{ background:#FDECEA; color:#C13B30; }
   .src-row{ display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:9px; margin-bottom:6px; }
+  .ct-out{ white-space:pre-wrap; font-size:13.5px; line-height:1.6; background:var(--bg); border:1px solid var(--border); border-radius:9px; padding:10px 12px; }
+  .denial-grid{ display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; }
+  .denial-pick{ padding:3px 0; }
+  .denial-pick.on span{ color:var(--primary-dark); font-weight:600; }
+  .wait-age{ font-size:11px; font-weight:700; color:var(--muted); background:var(--border); border-radius:999px; padding:2px 7px; flex-shrink:0; }
+  .wait-age-old{ background:#FDECEA; color:#C13B30; }
+  @media (max-width: 700px){ .denial-grid{ grid-template-columns:1fr; } }
+  .deadline-out{ display:flex; align-items:center; gap:10px; background:var(--primary-soft); border-radius:11px; padding:11px 14px; margin-top:12px; }
+  .deadline-late{ background:#FDECEA; }
+  .deadline-pill{ font-size:11.5px; font-weight:700; background:#fff; color:var(--primary-dark); border-radius:999px; padding:3px 10px; white-space:nowrap; }
+  .deadline-pill-late{ color:#C13B30; }
   .lead-q{ font-size:14px; line-height:1.6; background:#fff; border:1px solid #F2D398; border-radius:9px; padding:10px 12px; }
   .dcard{ position:relative; transition:border-color .15s ease, background .15s ease; }
   .tone-red{ border-color:#F0B4AE; background:#FEF6F5; }
   .tone-red .stat-big .num{ color:#C13B30; }
   .tone-amber{ border-color:#F2D398; background:#FFFBF2; }
   .tone-amber .stat-big .num{ color:#A8730F; }
+  .tone-blue{ border-color:#A8C6E8; background:#F5F9FD; }
+  .tone-blue .stat-big .num{ color:#185FA5; }
+  .tone-blue .tone-flag{ background:#185FA5; color:#fff; }
   .tone-green{ border-color:#A9D8BF; background:#F5FBF7; }
   .tone-green .stat-big .num{ color:#2F7A4F; }
   .tone-flag{ position:absolute; top:-8px; left:14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:999px; }
@@ -234,6 +248,8 @@ const DEFAULT_STATE = {
   ],
   kb: [],            // knowledge base articles
   pinnedNav: ['home','templates','triage','assistant'],
+  deadlineRules: [],      // custom rules you add
+  committeeMeetings: {},  // { 'YYYY-MM': { first:'YYYY-MM-DD', second:'YYYY-MM-DD' } }
   teamGoal: null,    // { text, notes, target, progress, done, duration, startDate, endDate, repeat }
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
   tasks: [],         // { id, text, done, createdDate, completedDate }
@@ -371,6 +387,8 @@ async function loadState(){
     if (t.waitingOn === undefined) t.waitingOn = '';
   });
   if (!Array.isArray(state.pinnedNav)) state.pinnedNav = ['home','templates','triage','assistant'];
+  if (!Array.isArray(state.deadlineRules)) state.deadlineRules = [];
+  if (!state.committeeMeetings || typeof state.committeeMeetings !== 'object') state.committeeMeetings = {};
   if (state.teamGoal === undefined) state.teamGoal = null;
   if (state.teamGoal) {
     const g = state.teamGoal;
@@ -607,6 +625,7 @@ const NAV_ITEMS = [
   { key:'knowledge', label:'Knowledge',    ic:'book'     },
   { key:'members',   label:'Members',      ic:'idcard'   },
   { key:'calendar',  label:'Calendar',     ic:'calendar' },
+  { key:'tools',     label:'Tools',        ic:'wand'     },
   { key:'dashboard', label:'Dashboard',    ic:'chart'    },
   { key:'roles',     label:'Roles',        ic:'users'    },
   { key:'sender',    label:'Sender',       ic:'user'     },
@@ -677,6 +696,7 @@ function sidebarHtml(){
 
 function mainBody(){
   if (view === 'home') return viewHome();
+  if (view === 'tools') return viewTools();
   if (view === 'triage') return viewTriage();
   if (view === 'assistant') return viewAssistant();
   if (view === 'knowledge') return viewKnowledge();
@@ -707,28 +727,43 @@ function ensureCategoryDefaults(c){
   return c;
 }
 
-// Card urgency: red (overdue) > amber (due today) > green (work remaining) > plain.
-// Rank drives the order on screen, tone drives the colour.
+// Cards are ordered by WHEN their work is due, soonest first. A card whose
+// earliest unfinished due date is three weeks ago outranks one due yesterday,
+// which outranks today, which outranks Friday. Cards with only a remaining
+// count come next, then everything else.
+//
+//   rank 0 = has dated unfinished work  (ordered by that date)
+//   rank 1 = work remaining on today's counts
+//   rank 2 = nothing pressing
 function cardPriority(catId, key){
   const tasks = catId === null
     ? state.tasks.filter(t => taskCategoryIds(t).length === 0)
     : state.tasks.filter(t => taskCategoryIds(t).includes(catId));
 
-  if (tasks.some(isOverdue)) return { rank: 0, tone: 'red' };
-  if (tasks.some(isDueToday)) return { rank: 1, tone: 'amber' };
+  const dated = tasks.filter(t => !t.done && t.dueDate).map(t => t.dueDate).sort();
+  if (dated.length) {
+    const soonest = dated[0];
+    const today = todayKey();
+    const tone = soonest < today ? 'red' : (soonest === today ? 'amber' : 'blue');
+    return { rank: 0, due: soonest, tone };
+  }
 
   if (catId !== null) {
     const rec = (state.dailyCounts[key] && state.dailyCounts[key][catId]) || { assigned:0, completed:0 };
-    if (Math.max(0, rec.assigned - rec.completed) > 0) return { rank: 2, tone: 'green' };
+    if (Math.max(0, rec.assigned - rec.completed) > 0) return { rank: 1, due: null, tone: 'green' };
   }
-  return { rank: 3, tone: '' };
+  return { rank: 2, due: null, tone: '' };
 }
 
 function sortedHomeCards(key){
   const items = [{ id: null, cat: null }].concat(state.categories.map(c => ({ id: c.id, cat: c })));
   return items
     .map((it, i) => Object.assign({}, it, cardPriority(it.id, key), { origIndex: i }))
-    .sort((a,b) => a.rank - b.rank || a.origIndex - b.origIndex);
+    .sort((a,b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      if (a.due && b.due && a.due !== b.due) return a.due < b.due ? -1 : 1;
+      return a.origIndex - b.origIndex;
+    });
 }
 
 function viewHome(){
@@ -751,7 +786,7 @@ function viewHome(){
     ${goalPanel()}
     ${dueTodayPanel()}
     <div class="grid">
-      ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone) : categoryCard(it.cat, key, it.tone)).join('')}
+      ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone, it.due) : categoryCard(it.cat, key, it.tone, it.due)).join('')}
       ${addCardTile()}
     </div>`}
   `;
@@ -1041,7 +1076,7 @@ function dueBadge(t){
   return ` <span class="due-pill">${escapeHtml(dateFromKey(t.dueDate).toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>`;
 }
 
-function generalCard(key, tone){
+function generalCard(key, tone, due){
   const tasks = state.tasks.filter(t => taskCategoryIds(t).length === 0);
   const openCount = tasks.filter(t => !t.done || t.completedDate===key).length;
   return `
@@ -1059,7 +1094,7 @@ function generalCard(key, tone){
   `;
 }
 
-function categoryCard(c, key, tone){
+function categoryCard(c, key, tone, due){
   ensureCategoryDefaults(c);
   const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
   const remaining = Math.max(0, rec.assigned - rec.completed);
@@ -1074,7 +1109,7 @@ function categoryCard(c, key, tone){
 
   return `
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
-      ${tone ? `<span class="tone-flag">${toneLabel(tone)}</span>` : ''}
+      ${tone ? `<span class="tone-flag">${toneLabel(tone, due)}</span>` : ''}
       <div class="dcard-head">
         <span class="dcard-title">${escapeHtml(c.label)}</span>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
@@ -1149,9 +1184,18 @@ function tasksMatchingLabel(label, includeCategorized, excludeCatId){
   });
 }
 
-function toneLabel(tone){
-  if (tone === 'red') return 'Overdue';
+function toneLabel(tone, due){
+  if (tone === 'red') {
+    if (!due) return 'Overdue';
+    const days = Math.round((dateFromKey(todayKey()) - dateFromKey(due)) / 86400000);
+    return days === 1 ? 'Overdue 1 day' : `Overdue ${days} days`;
+  }
   if (tone === 'amber') return 'Due today';
+  if (tone === 'blue') {
+    if (!due) return 'Scheduled';
+    const days = Math.round((dateFromKey(due) - dateFromKey(todayKey())) / 86400000);
+    return days === 1 ? 'Due tomorrow' : `Due in ${days} days`;
+  }
   if (tone === 'green') return 'In progress';
   return '';
 }
@@ -1692,6 +1736,482 @@ ${articles}`;
     askError = e.message || 'Could not get an answer.';
     render();
   }
+}
+
+// ---------------- Contact tracking generator ----------------
+let ctType = 'at';
+let ctFields = {};
+
+const CT_FORMS = {
+  at: {
+    label: 'Account Transfer',
+    fields: [
+      { k:'transferor', l:'Transferor ID' },
+      { k:'transferee', l:'Transferee ID' },
+      { k:'decision',   l:'Transferor decision', opts:['terminate','remain a WC'] },
+      { k:'rankFrom',   l:'Transferor rank' },
+      { k:'rankTo',     l:'Transferee rank' },
+      { k:'encChange',  l:'Eligible for', opts:['1st enroller change','2nd enroller change'] },
+      { k:'origEnc',    l:'Original enroller ID (2nd change only)', optional:true },
+    ],
+    build: f => {
+      let out = `Account Transfer from ${f.transferor||'( )'} to ${f.transferee||'( )'}; requested to ${f.decision||'terminate/remain a WC'}; rank ${f.rankFrom||'( )'} and ${f.rankTo||'( )'}. Eligible for ${f.encChange||'1st enroller change'}.`;
+      if ((f.encChange||'').startsWith('2nd') && f.origEnc) out += ` Original enroller ID: ${f.origEnc}.`;
+      return out;
+    },
+    note: 'Leave this on BOTH accounts. After an account transfer, the transferor\'s rank and enroller change history reset.'
+  },
+  swap: {
+    label: 'Swap',
+    fields: [
+      { k:'a',        l:'Member A ID' },
+      { k:'b',        l:'Member B ID' },
+      { k:'helper',   l:'Helper account ID' },
+      { k:'rankA',    l:'Member A rank' },
+      { k:'rankB',    l:'Member B rank' },
+      { k:'eligible', l:'1st enroller change', opts:['is eligible','is not eligible'] },
+      { k:'origEnc',  l:'Original enroller ID (if not eligible)', optional:true },
+    ],
+    build: f => {
+      let out = `Swap ${f.a||'( )'} and ${f.b||'( )'}; helper ${f.helper||'( )'}; rank ${f.rankA||'( )'}/${f.rankB||'( )'}; ${f.eligible||'is eligible'} for 1st enroller change.`;
+      if ((f.eligible||'') === 'is not eligible' && f.origEnc) out += ` Original enroller: ${f.origEnc}.`;
+      return out;
+    },
+    note: 'Leave this on ALL THREE accounts, including the helper.'
+  },
+  dup: {
+    label: 'Duplicate Account',
+    fields: [
+      { k:'acc1',  l:'1st Account #' },
+      { k:'acc2',  l:'2nd Account #' },
+      { k:'lrp',   l:'LRP Points' },
+      { k:'srp',   l:'SRP Points' },
+      { k:'po3',   l:'PO3' },
+      { k:'ar',    l:'AR Balance' },
+      { k:'pct',   l:'Percentage' },
+      { k:'order', l:'Order #' },
+      { k:'rank',  l:'Rank' },
+      { k:'down',  l:'Downline' },
+    ],
+    build: f => [
+      `1st Account #: ${f.acc1||''}`,
+      `2nd Account #: ${f.acc2||''}`,
+      `LRP Points: ${f.lrp||''}`,
+      `SRP Points: ${f.srp||''}`,
+      `PO3: ${f.po3||''}`,
+      `AR Balance: ${f.ar||''}`,
+      `Percentage: ${f.pct||''}`,
+      `Order #: ${f.order||''}`,
+      `Rank: ${f.rank||''}`,
+      `Downline: ${f.down||''}`,
+    ].join('\n'),
+    note: 'Leave this on BOTH accounts.'
+  },
+  inactive: {
+    label: 'Signature not required (12 months inactive)',
+    fields: [
+      { k:'who', l:'Which party', opts:['Member','Transferor','Member A'] },
+    ],
+    build: f => `${f.who||'Member'} was 12 months inactive; ${(f.who||'Member')==='Member A' ? "Member A's" : (f.who||'Member').toLowerCase()+"'s"} signature not required.`,
+    note: 'Gives a clear audit trail explaining why the signature was not obtained.'
+  },
+  india: {
+    label: 'India sponsor change',
+    fields: [
+      { k:'member', l:'Member ID' },
+      { k:'sponsor', l:'New sponsor ID' },
+      { k:'enrolled', l:'Qualifying enrollment ID' },
+    ],
+    build: f => `India sponsor change: ${f.member||'( )'} moved under ${f.sponsor||'( )'}. Qualified via organic enrollment ${f.enrolled||'( )'} with 100 PV NMO. One per lifetime - no further sponsor moves without an Exception Application.`,
+    note: 'CRITICAL: this is the only way an India sponsor change is tracked.'
+  },
+  compliance: {
+    label: 'Compliance-directed enroller move',
+    fields: [
+      { k:'member', l:'Moving member ID' },
+      { k:'to',     l:'New enroller ID' },
+      { k:'which',  l:'Counts as', opts:['1st enroller change','2nd enroller change'] },
+    ],
+    build: f => `Enrollership moved: ${f.member||'( )'} to ${f.to||'( )'}. Came from Compliance for an unsupportive upline. Counts as the member's ${f.which||'1st enroller change'}.`,
+    note: 'These moves DO count as a 1st or 2nd enroller change.'
+  },
+};
+
+function ctOutput(){
+  const form = CT_FORMS[ctType];
+  return form ? form.build(ctFields) : '';
+}
+
+function viewCT(){
+  const form = CT_FORMS[ctType];
+  const out = ctOutput();
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:640px;">
+      <label class="section">Contact tracking</label>
+      <p class="hint" style="margin:3px 0 10px;">Fill in the boxes, copy the note. Formats come from your saved processes.</p>
+
+      <div class="field">
+        <label class="hint" style="display:block; margin-bottom:3px;">Type</label>
+        <select id="ct-type">
+          ${Object.keys(CT_FORMS).map(k => `<option value="${k}" ${ctType===k?'selected':''}>${escapeHtml(CT_FORMS[k].label)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="row2" style="gap:8px;">
+        ${form.fields.map(f => `
+          <div style="margin-bottom:8px;">
+            <label class="hint" style="display:block; margin-bottom:2px;">${escapeHtml(f.l)}</label>
+            ${f.opts
+              ? `<select data-ct-field="${f.k}">${f.opts.map(o => `<option value="${escapeAttr(o)}" ${ctFields[f.k]===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>`
+              : `<input data-ct-field="${f.k}" value="${escapeAttr(ctFields[f.k]||'')}" />`}
+          </div>`).join('')}
+      </div>
+
+      <div style="border-top:1px solid var(--border); margin-top:10px; padding-top:11px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+          <label class="hint" style="margin:0; font-weight:700;">Note to paste</label>
+          <button data-copy-ct class="btn btn-ghost" style="padding:5px 12px; font-size:12.5px;">${icon('copy',13)} Copy</button>
+        </div>
+        <div class="ct-out">${escapeHtml(out)}</div>
+        ${form.note ? `<p class="hint" style="margin-top:9px;">${escapeHtml(form.note)}</p>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ---------------- Waiting on ----------------
+function viewWaiting(){
+  const waiting = state.tasks.filter(t => !t.done && t.waitingOn);
+  if (!waiting.length) {
+    return `<div class="card" style="margin-bottom:16px; max-width:640px;">
+      <label class="section">Waiting on</label>
+      <p class="subtle" style="margin:10px 0 0; font-size:13px;">Nothing is parked waiting on anyone.</p>
+      <p class="hint" style="margin-top:6px;">Set "waiting on" from the calendar icon on any task.</p>
+    </div>`;
+  }
+
+  const groups = {};
+  waiting.forEach(t => { (groups[t.waitingOn] = groups[t.waitingOn] || []).push(t); });
+  const today = todayKey();
+
+  const age = t => {
+    const from = t.dueDate || t.createdDate;
+    if (!from) return null;
+    return Math.round((dateFromKey(today) - dateFromKey(from)) / 86400000);
+  };
+
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:640px;">
+      <label class="section">Waiting on · ${waiting.length}</label>
+      <div style="margin-top:10px;">
+        ${Object.keys(groups).sort().map(who => {
+          const list = groups[who].slice().sort((a,b) => (age(b)||0) - (age(a)||0));
+          return `
+          <div style="margin-bottom:12px;">
+            <p class="hint" style="margin:0 0 5px; font-weight:700;">${escapeHtml(who)} · ${list.length}</p>
+            ${list.map(t => {
+              const d = age(t);
+              const stale = d !== null && d >= 10;
+              return `
+              <div class="src-row">
+                <input type="checkbox" data-task-toggle="${t.id}" style="width:14px;height:14px;flex-shrink:0;" />
+                <div style="flex:1;">
+                  <div style="font-size:13.5px;">${escapeHtml(t.text)}</div>
+                  <div class="search-meta">${taskCategoryIds(t).map(id => escapeHtml((state.categories.find(c=>c.id===id)||{}).label||'')).filter(Boolean).join(', ') || 'General'}${t.dueDate ? ' · due ' + escapeHtml(t.dueDate) : ''}</div>
+                </div>
+                ${d !== null ? `<span class="wait-age${stale?' wait-age-old':''}">${d}d</span>` : ''}
+              </div>`;
+            }).join('')}
+          </div>`;
+        }).join('')}
+      </div>
+      <p class="hint">Anything sitting 10 days or more is flagged. Tick it off here when it comes back.</p>
+    </div>
+  `;
+}
+
+// ---------------- Denial builder ----------------
+let denialPicks = [];
+let denialLoading = false;
+let denialError = '';
+let denialOutput = '';
+
+// Wording lifted from the Committee's own denial responses.
+const DENIAL_REASONS = [
+  { k:'builds',   l:'Builds or solidifies rank',        txt:'if the move were processed it would potentially build rank for [member name]. We typically do not approve moves that build rank.' },
+  { k:'breaks',   l:'Breaks the current upline rank',   txt:'if the move were processed it would potentially break rank for [member name]. We typically do not approve moves that negatively impact the current upline.' },
+  { k:'volume',   l:'Large organizational volume',      txt:'to make sure everyone receives the same opportunities and that teams are built organically, we do not typically approve moves with large amounts of organizational volume like [member name] has. The Committee is unable to approve moving over 1000 in organizational volume.' },
+  { k:'inactive', l:'Moving under an inactive builder', txt:'we want to ensure that members have an active and supportive upline. It appears that [member name] has not been actively participating in commissions or building their team recently. Along with new enrollments, the Committee counts ordering 100 PV monthly as active.' },
+  { k:'pulling',  l:'Pulling from an active upline',    txt:'the Committee cannot approve requests that pull a member or a team and their organizational volume out from other upline members, as this move appears to do.' },
+  { k:'wc',       l:'Proposed upline is a Wholesale Customer', txt:'[member name] is a Wholesale Customer, and Wholesale Customers cannot hold a downline. If they are interested in being a Wellness Advocate, please have them upgrade their account and then respond to this email.' },
+  { k:'underdown',l:'Placing an upline under their own downline', txt:'we cannot approve moves that place an upline member under a member of their current downline.' },
+  { k:'notorig',  l:'2nd enroller change not returning to original', txt:'the Committee cannot approve second enroller change requests that do not return enrollership back to the original enroller.' },
+  { k:'third',    l:'Third enroller change',            txt:'the Committee cannot approve a third enroller change, as this move appears to do.' },
+  { k:'notben',   l:'Not beneficial to the new enroller', txt:'the Committee cannot approve a move that is not immediately beneficial to the new enroller.' },
+  { k:'stacked',  l:'Swapping members are not stacked', txt:'the swapping members for this move are not stacked (one sponsoring the other), which is a requirement.' },
+  { k:'benefint', l:'Beneficial interest found',        txt:'during the review we noted [what was found]. This would be considered beneficial interest and disqualifies the move. If you have any questions on beneficial interest, please reach out to the Compliance Team.' },
+  { k:'crossline',l:'Crossline recruiting',             txt:'we cannot condone or approve of crossline recruiting, and this move is the result of crossline recruiting.' },
+  { k:'downline', l:'Transferee already holds a downline', txt:'[member name] currently holds a downline. The Committee does not approve Account Transfers where the member inheriting the account already holds an established downline, because we want the transferee to be a new builder.' },
+];
+
+async function runDenialBuild(){
+  if (!denialPicks.length) { showToast('Pick at least one reason'); return; }
+  denialError = ''; denialLoading = true; denialOutput = ''; render();
+
+  const chosen = DENIAL_REASONS.filter(r => denialPicks.includes(r.k));
+  const instruction = `Write ONE denial email for a doTERRA Exception Application, combining the reasons below.
+
+Rules:
+- Use the supplied wording for each reason. You may join sentences so it reads naturally, but do not soften, reword or invent policy.
+- Keep the bracketed placeholders exactly as they are, e.g. [member name]. Do not replace them.
+- Open with: "Thank you for your Exception Application dated [application date]. The Exceptions Committee has carefully and sympathetically reviewed your request to [describe the request]. Your reference number is [reference number]."
+- Then: "We are sorry to report that we are unable to approve this request. We understand that [member's reasoning]. However, ..." and work the reasons in from there.
+- Close with the standard apology paragraph about following policies and guidelines, then "Sincerely," on its own line.
+- Do not add a signature name.
+
+Return ONLY the email text. No preamble, no JSON, no markdown.
+
+REASONS TO COMBINE:
+${chosen.map((r,i) => `${i+1}. ${r.l}: ${r.txt}`).join('\n')}`;
+
+  try {
+    const resp = await fetch('/.netlify/functions/combine', {
+      method:'POST',
+      headers: authHeaders({ 'Content-Type':'application/json' }),
+      body: JSON.stringify({ instruction }),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if (!resp.ok) throw new Error(data.error || ('Request failed (' + resp.status + ')'));
+    denialOutput = (data.result || '').trim();
+    if (!denialOutput) throw new Error('Nothing came back.');
+    denialLoading = false; render();
+  } catch(e){
+    denialLoading = false;
+    denialError = e.message || 'Could not build that.';
+    render();
+  }
+}
+
+function viewDenialBuilder(){
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:640px;">
+      <label class="section">Denial builder</label>
+      <p class="hint" style="margin:3px 0 10px;">Tick every reason that applies. It builds one email using the Committee's own wording.</p>
+
+      <div class="denial-grid">
+        ${DENIAL_REASONS.map(r => `
+          <label class="card-task-row denial-pick${denialPicks.includes(r.k)?' on':''}">
+            <input type="checkbox" data-denial-pick="${r.k}" ${denialPicks.includes(r.k)?'checked':''} />
+            <span style="font-size:13px;">${escapeHtml(r.l)}</span>
+          </label>`).join('')}
+      </div>
+
+      <div style="display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap;">
+        <button data-build-denial class="btn btn-primary" style="padding:8px 16px;" ${denialLoading?'disabled':''}>${denialLoading ? 'Writing…' : `Build email${denialPicks.length ? ' ('+denialPicks.length+')' : ''}`}</button>
+        ${denialPicks.length ? `<button data-clear-denial class="btn btn-ghost" style="padding:8px 14px;">Clear</button>` : ''}
+      </div>
+      ${denialError ? `<p style="color:#D0453A; font-size:13px; margin:10px 0 0;">${escapeHtml(denialError)}</p>` : ''}
+
+      ${denialOutput ? `
+        <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:12px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+            <label class="hint" style="margin:0; font-weight:700;">Draft</label>
+            <button data-copy-denial class="btn btn-ghost" style="padding:5px 12px; font-size:12.5px;">${icon('copy',13)} Copy</button>
+          </div>
+          <div class="ct-out">${escapeHtml(denialOutput)}</div>
+          <p class="hint" style="margin-top:9px;">Fill in the bracketed parts before sending, and read it through — it is assembled, not approved.</p>
+        </div>` : ''}
+    </div>
+  `;
+}
+
+// ---------------- Tools: deadlines and committee cutoff ----------------
+let toolDate = '';
+let toolRuleId = '';
+let addingRule = false;
+
+// Built in from your own documentation. Custom rules are added alongside these.
+const BUILTIN_RULES = [
+  { id:'r_tenth',    name:'Sponsor change - by the 10th of the following month', kind:'tenthNext',  note:'From the date the member qualified. An exception can be made past the 10th if commissions have not yet run.' },
+  { id:'r_raf60',    name:'Refer a Friend - 60 days from upgrade',               kind:'days', n:60,  note:'Referrals enrolled within 60 days prior to the upgrade can be moved. Slight exceptions considered at ~5 days over for 1-2 members.' },
+  { id:'r_br45',     name:'Brazil swaps - 45 days between requests',             kind:'days', n:45,  note:'From the last processed swap or reversal. No exceptions.' },
+  { id:'r_cross12',  name:'Crossline - 12 consecutive months in the same team',  kind:'months', n:12,note:'Must be fully completed BEFORE the request is submitted.' },
+  { id:'r_term12',   name:'Termination - 12 months inactive',                    kind:'months', n:12,note:'Must be continuous inactivity. Suspended and below Silver can be 6 months.' },
+  { id:'r_susp6',    name:'Suspended below Silver - 6 months inactive',          kind:'months', n:6, note:'Requested by the inactive member or their Enroller. Check who suspended the account.' },
+  { id:'r_prem90',   name:'Premier move - 90 days',                              kind:'days', n:90, note:'Diamond+ enrollers: if the upgraded referrer hits Premier+ within three months.' },
+  { id:'r_raf30',    name:'RAF referral issue - 30 days to report',              kind:'days', n:30, note:'Members must email within 30 days of the referral enrollment or the request is denied.' },
+];
+
+function allRules(){ return BUILTIN_RULES.concat(state.deadlineRules || []); }
+
+function addDays(key, n){
+  const d = dateFromKey(key); d.setDate(d.getDate() + n); return keyFromDate(d);
+}
+function addMonths(key, n){
+  const d = dateFromKey(key);
+  const day = d.getDate();
+  d.setDate(1); d.setMonth(d.getMonth() + n);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return keyFromDate(d);
+}
+function tenthOfNextMonth(key){
+  const d = dateFromKey(key);
+  return keyFromDate(new Date(d.getFullYear(), d.getMonth() + 1, 10));
+}
+
+function computeDeadline(rule, fromKey){
+  if (!rule || !fromKey) return null;
+  if (rule.kind === 'tenthNext') return tenthOfNextMonth(fromKey);
+  if (rule.kind === 'days')      return addDays(fromKey, rule.n || 0);
+  if (rule.kind === 'months')    return addMonths(fromKey, rule.n || 0);
+  return null;
+}
+
+function prettyDate(key){
+  if (!key) return '';
+  return dateFromKey(key).toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'long', year:'numeric' });
+}
+
+// Requests submitted 1st-15th go to the SECOND meeting that month.
+// Submitted 16th onward go to the FIRST meeting of the following month.
+function committeeFor(key){
+  if (!key) return null;
+  const d = dateFromKey(key);
+  const day = d.getDate();
+  if (day <= 15) {
+    const m = keyFromDate(new Date(d.getFullYear(), d.getMonth(), 1)).slice(0,7);
+    return { monthKey: m, which: 'second' };
+  }
+  const nd = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return { monthKey: keyFromDate(nd).slice(0,7), which: 'first' };
+}
+
+function monthLabel(monthKey){
+  const [y,m] = monthKey.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString(undefined, { month:'long', year:'numeric' });
+}
+
+function viewTools(){
+  const rules = allRules();
+  const rule = rules.find(r => r.id === toolRuleId) || rules[0];
+  const from = toolDate || todayKey();
+  const deadline = computeDeadline(rule, from);
+  const today = todayKey();
+  const daysLeft = deadline ? Math.round((dateFromKey(deadline) - dateFromKey(today)) / 86400000) : null;
+  const stillOk = deadline ? deadline >= today : null;
+
+  const cm = committeeFor(from);
+  const rec = cm ? (state.committeeMeetings[cm.monthKey] || {}) : {};
+  const meetingDate = cm ? rec[cm.which] : null;
+  const thisMonth = todayKey().slice(0,7);
+  const nextMonth = keyFromDate(new Date(dateFromKey(todayKey()).getFullYear(), dateFromKey(todayKey()).getMonth()+1, 1)).slice(0,7);
+
+  return `
+    <div class="page-header"><div class="page-title">Tools</div></div>
+
+    ${viewWaiting()}
+    ${viewCT()}
+    ${viewDenialBuilder()}
+
+    <div class="card" style="margin-bottom:16px; max-width:640px;">
+      <label class="section">Deadline calculator</label>
+      <div class="row2 field" style="margin-top:8px;">
+        <div>
+          <label class="hint" style="display:block; margin-bottom:3px;">Start date</label>
+          <input type="date" id="tool-date" value="${escapeAttr(from)}" />
+        </div>
+        <div>
+          <label class="hint" style="display:block; margin-bottom:3px;">Rule</label>
+          <select id="tool-rule">
+            ${rules.map(r => `<option value="${r.id}" ${rule && r.id===rule.id?'selected':''}>${escapeHtml(r.name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      ${deadline ? `
+        <div class="deadline-out${stillOk ? '' : ' deadline-late'}">
+          <div style="flex:1;">
+            <div class="hint" style="margin:0 0 2px;">Deadline</div>
+            <div style="font-size:16px; font-weight:700;">${escapeHtml(prettyDate(deadline))}</div>
+          </div>
+          <span class="deadline-pill${stillOk ? '' : ' deadline-pill-late'}">
+            ${stillOk ? (daysLeft === 0 ? 'last day' : `${daysLeft} day${daysLeft===1?'':'s'} left`) : `passed ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'} ago`}
+          </span>
+        </div>
+      ` : ''}
+      ${rule && rule.note ? `<p class="hint" style="margin-top:9px;">${escapeHtml(rule.note)}</p>` : ''}
+
+      ${addingRule ? `
+        <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:12px;">
+          <label class="section">Add your own rule</label>
+          <div class="field"><label class="hint">Name</label><input id="rule-name" placeholder="e.g. AM enroller change cutoff" /></div>
+          <div class="row2 field">
+            <div>
+              <label class="hint">Type</label>
+              <select id="rule-kind">
+                <option value="days">Days from the start date</option>
+                <option value="months">Months from the start date</option>
+                <option value="tenthNext">10th of the following month</option>
+              </select>
+            </div>
+            <div><label class="hint">How many</label><input type="number" min="1" id="rule-n" placeholder="e.g. 30" /></div>
+          </div>
+          <div class="field"><label class="hint">Note (optional)</label><input id="rule-note" placeholder="Anything worth remembering" /></div>
+          <div style="display:flex; gap:8px;">
+            <button data-save-rule class="btn btn-primary" style="padding:8px 16px;">Save rule</button>
+            <button data-cancel-rule class="btn btn-ghost" style="padding:8px 14px;">Cancel</button>
+          </div>
+        </div>
+      ` : `
+        <button data-add-rule class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin-top:12px;">${icon('plus',13)} Add your own rule</button>
+      `}
+
+      ${(state.deadlineRules||[]).length ? `
+        <div style="border-top:1px solid var(--border); margin-top:12px; padding-top:10px;">
+          <label class="hint" style="display:block; margin-bottom:6px; font-weight:700;">Your rules</label>
+          ${state.deadlineRules.map(r => `
+            <div class="src-row">
+              <div style="flex:1;">
+                <div style="font-size:13.5px; font-weight:600;">${escapeHtml(r.name)}</div>
+                <div class="search-meta">${r.kind==='tenthNext' ? '10th of the following month' : `${r.n} ${r.kind}`}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
+              </div>
+              <button data-delete-rule="${r.id}" class="icon-btn danger" style="width:26px;height:26px;">${icon('trash',12)}</button>
+            </div>`).join('')}
+        </div>` : ''}
+    </div>
+
+    <div class="card" style="max-width:640px;">
+      <label class="section">Committee cutoff</label>
+      <p class="hint" style="margin:3px 0 10px;">Submitted 1st to 15th goes to the second meeting that month. 16th onward goes to the first meeting of the following month.</p>
+
+      ${cm ? `
+        <div class="deadline-out">
+          <div style="flex:1;">
+            <div class="hint" style="margin:0 0 2px;">A request submitted ${escapeHtml(prettyDate(from))} goes to</div>
+            <div style="font-size:16px; font-weight:700;">The ${cm.which} meeting in ${escapeHtml(monthLabel(cm.monthKey))}</div>
+            ${meetingDate ? `<div class="hint" style="margin-top:3px;">Scheduled for ${escapeHtml(prettyDate(meetingDate))}</div>`
+                          : `<div class="hint" style="margin-top:3px;">Date not entered yet — add it below.</div>`}
+          </div>
+        </div>` : ''}
+
+      <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:12px;">
+        <label class="hint" style="display:block; margin-bottom:8px; font-weight:700;">Meeting dates</label>
+        ${[thisMonth, nextMonth].map(mk => {
+          const r = state.committeeMeetings[mk] || {};
+          return `
+          <div style="margin-bottom:10px;">
+            <div class="hint" style="margin-bottom:4px;">${escapeHtml(monthLabel(mk))}</div>
+            <div class="row2" style="gap:8px;">
+              <div><label class="hint" style="display:block; margin-bottom:2px;">First meeting</label><input type="date" data-meeting="${mk}|first" value="${escapeAttr(r.first||'')}" /></div>
+              <div><label class="hint" style="display:block; margin-bottom:2px;">Second meeting</label><input type="date" data-meeting="${mk}|second" value="${escapeAttr(r.second||'')}" /></div>
+            </div>
+          </div>`;
+        }).join('')}
+        <p class="hint">Dates change each month, so update them when they are announced. Remember these are not given out to members.</p>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------- Triage an incoming email ----------------
@@ -2983,6 +3503,88 @@ function attachHandlers(){
     if (!cat) return;
     cat.noteText = el.value;
     saveState();
+  });
+
+  const ctTypeEl = document.getElementById('ct-type');
+  if (ctTypeEl) ctTypeEl.onchange = () => { ctType = ctTypeEl.value; ctFields = {}; render(); };
+
+  document.querySelectorAll('[data-ct-field]').forEach(el => {
+    const k = el.getAttribute('data-ct-field');
+    const handler = () => {
+      ctFields[k] = el.value;
+      const pos = el.selectionStart;
+      render();
+      const again = document.querySelector(`[data-ct-field="${k}"]`);
+      if (again && again.setSelectionRange) { again.focus(); try { again.setSelectionRange(pos,pos); } catch(e){} }
+      else if (again) again.focus();
+    };
+    if (el.tagName === 'SELECT') el.onchange = handler; else el.oninput = handler;
+  });
+
+  const copyCtBtn = document.querySelector('[data-copy-ct]');
+  if (copyCtBtn) copyCtBtn.onclick = () => {
+    navigator.clipboard.writeText(ctOutput()).then(()=>showToast('Contact tracking copied'));
+  };
+
+  document.querySelectorAll('[data-denial-pick]').forEach(el => el.onchange = () => {
+    const k = el.getAttribute('data-denial-pick');
+    if (el.checked) { if (!denialPicks.includes(k)) denialPicks.push(k); }
+    else denialPicks = denialPicks.filter(x => x !== k);
+    render();
+  });
+
+  const buildDenialBtn = document.querySelector('[data-build-denial]');
+  if (buildDenialBtn) buildDenialBtn.onclick = () => { if (!denialLoading) runDenialBuild(); };
+
+  const clearDenialBtn = document.querySelector('[data-clear-denial]');
+  if (clearDenialBtn) clearDenialBtn.onclick = () => { denialPicks = []; denialOutput = ''; denialError = ''; render(); };
+
+  const copyDenialBtn = document.querySelector('[data-copy-denial]');
+  if (copyDenialBtn) copyDenialBtn.onclick = () => {
+    navigator.clipboard.writeText(denialOutput).then(()=>showToast('Draft copied'));
+  };
+
+  const toolDateEl = document.getElementById('tool-date');
+  if (toolDateEl) toolDateEl.onchange = () => { toolDate = toolDateEl.value; render(); };
+
+  const toolRuleEl = document.getElementById('tool-rule');
+  if (toolRuleEl) toolRuleEl.onchange = () => { toolRuleId = toolRuleEl.value; render(); };
+
+  const addRuleBtn = document.querySelector('[data-add-rule]');
+  if (addRuleBtn) addRuleBtn.onclick = () => { addingRule = true; render(); };
+
+  const cancelRuleBtn = document.querySelector('[data-cancel-rule]');
+  if (cancelRuleBtn) cancelRuleBtn.onmousedown = (e) => { e.preventDefault(); addingRule = false; render(); };
+
+  const saveRuleBtn = document.querySelector('[data-save-rule]');
+  if (saveRuleBtn) saveRuleBtn.onmousedown = (e) => {
+    e.preventDefault();
+    const name = (document.getElementById('rule-name')?.value || '').trim();
+    const kind = document.getElementById('rule-kind')?.value || 'days';
+    const n = parseInt(document.getElementById('rule-n')?.value, 10) || 0;
+    const note = (document.getElementById('rule-note')?.value || '').trim();
+    if (!name) { showToast('Give the rule a name'); return; }
+    if (kind !== 'tenthNext' && n <= 0) { showToast('Enter how many days or months'); return; }
+    const id = uid('rule');
+    state.deadlineRules.push({ id, name, kind, n, note });
+    addingRule = false; toolRuleId = id;
+    saveState(); render(); showToast('Rule saved');
+  };
+
+  document.querySelectorAll('[data-delete-rule]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-delete-rule');
+    if (!confirm('Delete this rule?')) return;
+    state.deadlineRules = state.deadlineRules.filter(r => r.id !== id);
+    if (toolRuleId === id) toolRuleId = '';
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-meeting]').forEach(el => el.onchange = () => {
+    const [mk, which] = el.getAttribute('data-meeting').split('|');
+    if (!state.committeeMeetings[mk]) state.committeeMeetings[mk] = {};
+    if (el.value) state.committeeMeetings[mk][which] = el.value;
+    else delete state.committeeMeetings[mk][which];
+    saveState(); render();
   });
 
   const runTriageBtn = document.querySelector('[data-run-triage]');
