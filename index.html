@@ -150,6 +150,12 @@
   .task-editor{ border:1px solid var(--border); border-radius:9px; padding:8px 9px; margin:2px 0 6px; }
   .src-pill{ font-size:10.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border-radius:999px; padding:1px 7px; }
   .kb-content{ white-space:pre-wrap; font-size:13.5px; line-height:1.6; }
+  .goal-card{ border-color:var(--primary); background:var(--primary-soft); padding:13px 16px; }
+  .goal-icon{ color:var(--primary-dark); flex-shrink:0; margin-top:2px; }
+  .goal-label{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--primary-dark); }
+  .goal-text{ font-size:14.5px; font-weight:600; margin-top:2px; }
+  .goal-left{ font-size:11px; font-weight:700; background:#fff; color:var(--primary-dark); border-radius:999px; padding:3px 9px; white-space:nowrap; flex-shrink:0; }
+  .goal-left-soon{ background:#FDECEA; color:#C13B30; }
   .conf-pill{ font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:999px; padding:2px 9px; }
   .conf-high{ background:#EAF6EF; color:#2F7A4F; }
   .conf-med{ background:#FEF6E7; color:#A8730F; }
@@ -192,6 +198,7 @@ const DEFAULT_STATE = {
     { id: 'c_transfers', label: 'Account Transfers', featuredStat: 'remaining', noteText: '' },
   ],
   kb: [],            // knowledge base articles
+  teamGoal: null,    // { text, startDate, endDate }  endDate null = no end
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
   tasks: [],         // { id, text, done, createdDate, completedDate }
 };
@@ -225,6 +232,7 @@ let patternsError = '';
 let patternGroups = null; // [{ name, taskIds, samples }]
 let taskSearchQuery = '';
 let showTaskDetail = false;
+let editingGoal = false;
 let calMonthOffset = 0;
 let selectedCalDay = null;
 let editingTaskId = null;
@@ -325,6 +333,7 @@ async function loadState(){
     if (t.dueDate === undefined) t.dueDate = null;
     if (t.waitingOn === undefined) t.waitingOn = '';
   });
+  if (state.teamGoal === undefined) state.teamGoal = null;
   if (!Array.isArray(state.kb)) state.kb = [];
   state.kb.forEach(a => {
     if (!Array.isArray(a.tags)) a.tags = [];
@@ -398,6 +407,7 @@ function icon(name, size){
     refresh: '<path d="M20 11a8 8 0 10-1.8 6.1"/><path d="M20 5v6h-6"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2.3"/><path d="M3 9.5h18M8 3v4M16 3v4"/>',
+    flag: '<path d="M5 21V4M5 4.5h11l-2 3.5 2 3.5H5"/>',
     book: '<path d="M4 4.5A1.5 1.5 0 015.5 3H19v18H5.5A1.5 1.5 0 014 19.5v-15z"/><path d="M4 17.5A1.5 1.5 0 015.5 16H19"/>',
   };
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${map[name]||''}</svg>`;
@@ -616,10 +626,11 @@ function viewHome(){
       </div>
     </div>
     <div class="field" style="max-width:340px;">
-      <input id="task-search" placeholder="Search all notes and tasks" value="${escapeAttr(taskSearchQuery)}" />
+      <input id="task-search" placeholder="Search cards, notes and tasks" value="${escapeAttr(taskSearchQuery)}" />
     </div>
 
     ${taskSearchQuery.trim() ? taskSearchResults() : `
+    ${goalPanel()}
     ${dueTodayPanel()}
     <div class="grid">
       ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone) : categoryCard(it.cat, key, it.tone)).join('')}
@@ -632,15 +643,31 @@ function taskSearchResults(){
   const q = taskSearchQuery.trim().toLowerCase();
   const hits = state.tasks.filter(t => (t.text||'').toLowerCase().includes(q));
   const noteHits = state.categories.filter(c => (c.noteText||'').toLowerCase().includes(q));
+  const cardHits = state.categories.filter(c => (c.label||'').toLowerCase().includes(q));
+  const total = hits.length + noteHits.length + cardHits.length;
 
-  if (!hits.length && !noteHits.length) {
+  if (!total) {
     return `<div class="card empty"><div class="empty-icon">${icon('search',20)}</div><div>Nothing matches "${escapeHtml(taskSearchQuery)}".</div></div>`;
   }
 
   return `
     <div class="card">
-      <label class="section">${hits.length + noteHits.length} result${(hits.length+noteHits.length)===1?'':'s'}</label>
+      <label class="section">${total} result${total===1?'':'s'}</label>
       <div style="margin-top:10px;">
+        ${cardHits.map(c => {
+          const key = todayKey();
+          const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
+          const open = state.tasks.filter(t => taskCategoryIds(t).includes(c.id) && !t.done).length;
+          return `
+          <div class="search-hit">
+            <span style="flex-shrink:0; color:var(--muted); margin-top:2px;">${icon('home',14)}</span>
+            <div style="flex:1;">
+              <div style="font-size:13.5px; font-weight:600;">${escapeHtml(c.label)}</div>
+              <div class="search-meta">Card · ${rec.assigned} assigned, ${rec.completed} done · ${open} open task${open===1?'':'s'}</div>
+            </div>
+            <button data-goto-card class="icon-btn" title="Go to Home" style="width:26px;height:26px;flex-shrink:0;">${icon('chevronRight',13)}</button>
+          </div>`;
+        }).join('')}
         ${noteHits.map(c => `
           <div class="search-hit">
             <div style="flex:1;">
@@ -662,6 +689,96 @@ function taskSearchResults(){
             </div>
           </div>`;
         }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ---------------- weekly team goal ----------------
+const GOAL_DURATIONS = [
+  { val:'week',    label:'1 week' },
+  { val:'2weeks',  label:'2 weeks' },
+  { val:'month',   label:'1 month' },
+  { val:'endweek', label:'Until Friday' },
+  { val:'none',    label:'No end date' },
+];
+
+function goalEndDate(kind, fromKey){
+  if (kind === 'none') return null;
+  const d = dateFromKey(fromKey);
+  if (kind === 'week')   d.setDate(d.getDate() + 7);
+  if (kind === '2weeks') d.setDate(d.getDate() + 14);
+  if (kind === 'month')  {
+    // setMonth alone rolls over: Jan 31 + 1 month would land in March.
+    // Clamp to the last valid day of the target month instead.
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, lastDay));
+  }
+  if (kind === 'endweek') {
+    const dow = d.getDay();               // 0=Sun .. 6=Sat
+    const toFriday = dow === 0 ? 5 : (5 - dow);
+    d.setDate(d.getDate() + (toFriday < 0 ? toFriday + 7 : toFriday));
+  }
+  return keyFromDate(d);
+}
+
+function goalDaysLeft(g){
+  if (!g || !g.endDate) return null;
+  const today = dateFromKey(todayKey());
+  const end = dateFromKey(g.endDate);
+  return Math.round((end - today) / 86400000);
+}
+
+function goalIsExpired(g){
+  const left = goalDaysLeft(g);
+  return left !== null && left < 0;
+}
+
+function goalPanel(){
+  const g = state.teamGoal;
+
+  if (editingGoal) {
+    const cur = g || { text:'', endDate:null };
+    return `
+      <div class="card goal-card" style="margin-bottom:14px;">
+        <label class="section">Team goal</label>
+        <input id="goal-text" value="${escapeAttr(cur.text||'')}" placeholder="e.g. Clear the exceptions backlog before Friday" style="margin-bottom:8px;" />
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <select id="goal-duration" style="max-width:170px;">
+            ${GOAL_DURATIONS.map(o => `<option value="${o.val}">${o.label}</option>`).join('')}
+          </select>
+          <button data-save-goal class="btn btn-primary" style="padding:8px 16px;">Save goal</button>
+          <button data-cancel-goal class="btn btn-ghost" style="padding:8px 14px;">Cancel</button>
+          ${g ? `<button data-clear-goal class="btn btn-ghost" style="padding:8px 14px; color:#C13B30;">Remove</button>` : ''}
+        </div>
+        <p class="hint" style="margin-top:8px;">It shows at the top of Home until it runs out, then disappears on its own.</p>
+      </div>
+    `;
+  }
+
+  if (!g || !g.text || goalIsExpired(g)) {
+    return `<div style="margin-bottom:12px;"><button data-edit-goal class="btn btn-ghost" style="padding:6px 12px; font-size:12.5px;">${icon('flag',13)} Set a team goal</button></div>`;
+  }
+
+  const left = goalDaysLeft(g);
+  const leftLabel = left === null ? 'ongoing'
+    : left === 0 ? 'last day'
+    : left === 1 ? '1 day left'
+    : `${left} days left`;
+
+  return `
+    <div class="card goal-card" style="margin-bottom:14px;">
+      <div style="display:flex; align-items:flex-start; gap:10px;">
+        <span class="goal-icon">${icon('flag',15)}</span>
+        <div style="flex:1;">
+          <div class="goal-label">Team goal</div>
+          <div class="goal-text">${escapeHtml(g.text)}</div>
+        </div>
+        <span class="goal-left${left !== null && left <= 1 ? ' goal-left-soon' : ''}">${leftLabel}</span>
+        <button data-edit-goal class="icon-btn" title="Edit goal" style="width:26px;height:26px;flex-shrink:0;">${icon('pencil',12)}</button>
       </div>
     </div>
   `;
@@ -2495,6 +2612,33 @@ function attachHandlers(){
   if (cancelArticleBtn) cancelArticleBtn.onmousedown = (e) => {
     e.preventDefault(); editingArticleId = null; articleDraft = null; render();
   };
+
+  document.querySelectorAll('[data-edit-goal]').forEach(el => el.onclick = () => { editingGoal = true; render(); });
+
+  const cancelGoalBtn = document.querySelector('[data-cancel-goal]');
+  if (cancelGoalBtn) cancelGoalBtn.onmousedown = (e) => { e.preventDefault(); editingGoal = false; render(); };
+
+  const clearGoalBtn = document.querySelector('[data-clear-goal]');
+  if (clearGoalBtn) clearGoalBtn.onmousedown = (e) => {
+    e.preventDefault();
+    state.teamGoal = null; editingGoal = false;
+    saveState(); render(); showToast('Goal removed');
+  };
+
+  const saveGoalBtn = document.querySelector('[data-save-goal]');
+  if (saveGoalBtn) saveGoalBtn.onmousedown = (e) => {
+    e.preventDefault();
+    const text = (document.getElementById('goal-text')?.value || '').trim();
+    if (!text) { showToast('Type the goal first'); return; }
+    const kind = document.getElementById('goal-duration')?.value || 'week';
+    const start = todayKey();
+    state.teamGoal = { text, startDate: start, endDate: goalEndDate(kind, start) };
+    editingGoal = false;
+    saveState(); render(); showToast('Team goal set');
+  };
+
+  const gotoCardBtn = document.querySelector('[data-goto-card]');
+  if (gotoCardBtn) gotoCardBtn.onclick = () => { taskSearchQuery = ''; render(); };
 
   const taskSearchEl = document.getElementById('task-search');
   if (taskSearchEl) taskSearchEl.oninput = () => {
