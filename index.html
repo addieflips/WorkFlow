@@ -786,6 +786,10 @@ const PIN_OPTIONS = [
 ];
 const PIN_LABELS = { remaining: 'remaining', open: 'open tasks' };
 
+// Which card's pin menu is open. Held here rather than as a DOM class so a
+// background re-render doesn't close it mid-click.
+let openPinMenu = null;
+
 function ensureCategoryDefaults(c){
   if (!c.featuredStat) c.featuredStat = 'remaining';
   if (c.noteText === undefined) c.noteText = '';
@@ -1223,10 +1227,11 @@ function categoryCard(c, key, tone, due){
     ? `<input data-card-note="${c.id}" class="note-input" placeholder="Type a note for this card..." value="${escapeAttr(c.noteText)}" />`
     : `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
 
-  // A note written while "Note" was pinned would otherwise become unreachable
-  // the moment the pin changed, so keep showing it whenever there's one saved.
-  const asideNote = (featured !== 'note' && (c.noteText || '').trim())
-    ? `<input data-card-note="${c.id}" class="note-input note-aside" title="Note" value="${escapeAttr(c.noteText)}" />`
+  // The note used to be reachable only when it was the pinned stat, which meant
+  // digging through the pin menu to edit a line of text. It's always here now;
+  // pinning it just promotes it to the big slot.
+  const asideNote = featured !== 'note'
+    ? `<input data-card-note="${c.id}" class="note-input note-aside" placeholder="Add a note..." title="Note for this card" value="${escapeAttr(c.noteText)}" />`
     : '';
 
   return `
@@ -1236,7 +1241,7 @@ function categoryCard(c, key, tone, due){
         <span class="dcard-title">${escapeHtml(c.label)}</span>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
         <button data-pin-toggle="${c.id}" class="icon-btn" title="Change pinned stat" style="width:26px;height:26px;">${icon('pin',13)}</button>
-        <div class="pin-menu" data-pin-menu="${c.id}">
+        <div class="pin-menu${openPinMenu === c.id ? ' open' : ''}" data-pin-menu="${c.id}">
           ${PIN_OPTIONS.map(o => `<button data-pin-choose="${c.id}" data-choose-val="${o.val}">${o.label}</button>`).join('')}
         </div>
       </div>
@@ -3780,7 +3785,7 @@ async function runGenerate(){
 if (!window.__dispatchOutsideClickBound) {
   window.__dispatchOutsideClickBound = true;
   document.addEventListener('click', () => {
-    document.querySelectorAll('.pin-menu.open').forEach(m => m.classList.remove('open'));
+    if (openPinMenu !== null) { openPinMenu = null; render(); }
   });
 }
 
@@ -3806,10 +3811,8 @@ function attachHandlers(){
   document.querySelectorAll('[data-pin-toggle]').forEach(el => el.onclick = (e) => {
     e.stopPropagation();
     const id = el.getAttribute('data-pin-toggle');
-    document.querySelectorAll('.pin-menu').forEach(m => {
-      if (m.getAttribute('data-pin-menu') === id) m.classList.toggle('open');
-      else m.classList.remove('open');
-    });
+    openPinMenu = (openPinMenu === id) ? null : id;
+    render();
   });
 
   document.querySelectorAll('[data-pin-choose]').forEach(el => el.onclick = (e) => {
@@ -3819,6 +3822,7 @@ function attachHandlers(){
     const cat = state.categories.find(c=>c.id===id);
     if (!cat) return;
     cat.featuredStat = val;
+    openPinMenu = null;
     saveState(); render();
   });
 
