@@ -168,6 +168,11 @@
   .cal-selected{ box-shadow:0 0 0 2px var(--primary); }
   .cal-dot{ font-size:10.5px; font-weight:700; background:var(--primary); color:#fff; border-radius:999px; padding:0 6px; }
   .cal-dot-late{ background:#D0453A; }
+  .cal-meet{ display:inline-flex; align-items:center; gap:2px; font-size:10.5px; font-weight:700; background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:0 5px; }
+  .meet-row{ display:flex; gap:10px; align-items:flex-start; border-left:3px solid var(--accent); background:var(--accent-soft); border-radius:0 9px 9px 0; padding:7px 10px; margin-bottom:6px; }
+  .meet-time{ font-size:12px; font-weight:700; color:var(--accent); white-space:nowrap; min-width:62px; }
+  .meet-title{ font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; }
+  .meet-loc{ font-size:12px; color:var(--muted); margin-top:1px; overflow:hidden; text-overflow:ellipsis; }
   .due-pill{ font-size:10.5px; font-weight:600; color:var(--muted); background:var(--border); border-radius:999px; padding:1px 6px; }
   .due-now{ background:var(--primary-soft); color:var(--primary-dark); }
   .due-late{ background:#FDECEA; color:#D0453A; }
@@ -718,7 +723,11 @@ function mainBody(){
   if (view === 'triage') return viewTriage();
   if (view === 'assistant') return viewAssistant();
   if (view === 'knowledge') return viewKnowledge();
-  if (view === 'calendar') return viewCalendar();
+  if (view === 'calendar') {
+    // Fires once per session, the first time the calendar is opened.
+    if (outlookStatus === 'idle') setTimeout(() => loadOutlook(), 0);
+    return viewCalendar();
+  }
   if (view === 'dashboard') return viewDashboard();
   if (view === 'categories') return viewCategories();
   if (view === 'templates') return viewTemplates();
@@ -2619,6 +2628,63 @@ function monthGrid(offset){
   return { cells, month, year, label: base.toLocaleDateString(undefined,{month:'long', year:'numeric'}) };
 }
 
+// ---------------- Outlook calendar feed ----------------
+// Fetched live from the published ICS feed each session. Nothing is saved into
+// state, so meeting details never land in the blob.
+let outlookEvents = [];
+let outlookStatus = 'idle'; // idle | loading | ok | off | error
+let outlookError = '';
+
+async function loadOutlook(force){
+  if (outlookStatus === 'loading') return;
+  if (!force && outlookStatus !== 'idle') return;
+  outlookStatus = 'loading'; outlookError = ''; render();
+  try {
+    const resp = await fetch('/.netlify/functions/outlook', { headers: authHeaders() });
+    if (resp.status === 401) { locked = true; lockError = 'Your session was locked. Enter the passcode to continue.'; render(); return; }
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 503 && data.error === 'not_configured') {
+      outlookEvents = []; outlookStatus = 'off'; render(); return;
+    }
+    if (!resp.ok) throw new Error(data.message || ('Calendar fetch failed (' + resp.status + ')'));
+    outlookEvents = Array.isArray(data.events) ? data.events : [];
+    outlookStatus = 'ok';
+  } catch(e){
+    outlookEvents = [];
+    outlookStatus = 'error';
+    outlookError = e.message || 'Could not reach your calendar';
+  }
+  render();
+}
+
+// The server hands back either a UTC instant (trailing Z), a floating wall time,
+// or a plain date. Only the first needs converting to the viewer's zone.
+function outlookDate(s){
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return dateFromKey(s);
+  if (s.endsWith('Z')) return new Date(s);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+}
+
+function meetingKey(ev){
+  if (ev.allDay) return ev.start.slice(0,10);
+  const d = outlookDate(ev.start);
+  return d ? keyFromDate(d) : '';
+}
+
+function meetingsOn(key){
+  return outlookEvents.filter(ev => meetingKey(ev) === key);
+}
+
+function meetingTime(ev){
+  if (ev.allDay) return 'All day';
+  const d = outlookDate(ev.start);
+  if (!d) return '';
+  return d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+}
+
 function tasksDueOn(key){
   return state.tasks.filter(t => t.dueDate === key);
 }
@@ -2649,26 +2715,69 @@ function viewCalendar(){
           const due = tasksDueOn(k);
           const open = due.filter(t => !t.done).length;
           const overdue = k < todayK && open > 0;
+          const meets = meetingsOn(k);
           return `
             <div data-cal-day="${k}" class="cal-cell${inMonth?'':' cal-dim'}${k===todayK?' cal-today':''}${sel===k?' cal-selected':''}">
               <span class="cal-num">${d.getDate()}</span>
-              ${due.length ? `<span class="cal-dot${overdue?' cal-dot-late':''}">${open || due.length}</span>` : ''}
+              <div style="display:flex; gap:3px; flex-wrap:wrap;">
+                ${due.length ? `<span class="cal-dot${overdue?' cal-dot-late':''}">${open || due.length}</span>` : ''}
+                ${meets.length ? `<span class="cal-meet" title="${meets.length} meeting${meets.length===1?'':'s'}">${icon('clock',9)}${meets.length}</span>` : ''}
+              </div>
             </div>`;
         }).join('')}
       </div>
     </div>
 
+    ${outlookBar()}
+
     ${sel ? calendarDayPanel(sel) : `<p class="subtle">Pick a day to see or add what's due.</p>`}
   `;
 }
 
+function outlookBar(){
+  if (outlookStatus === 'off') return '';
+  if (outlookStatus === 'loading') {
+    return `<p class="subtle" style="margin:-6px 0 14px; font-size:13px;">Loading your Outlook meetings…</p>`;
+  }
+  if (outlookStatus === 'error') {
+    return `
+      <div class="card" style="margin-bottom:16px; border-color:#F3C9C4;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:600; font-size:14px;">Couldn't load your meetings</div>
+            <div class="subtle" style="font-size:13px; margin-top:2px;">${escapeHtml(outlookError)}</div>
+          </div>
+          <button data-outlook-refresh class="btn btn-ghost" style="padding:7px 12px;">${icon('refresh',14)} Try again</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div style="display:flex; align-items:center; gap:8px; margin:-6px 0 14px; flex-wrap:wrap;">
+      <span class="subtle" style="font-size:13px;">${outlookEvents.length} meeting${outlookEvents.length===1?'':'s'} from Outlook</span>
+      <button data-outlook-refresh class="icon-btn" title="Refresh meetings" style="width:26px;height:26px;">${icon('refresh',12)}</button>
+    </div>`;
+}
+
 function calendarDayPanel(key){
   const due = tasksDueOn(key);
+  const meets = meetingsOn(key);
   const d = dateFromKey(key);
   const label = d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
   return `
     <div class="card">
       <label class="section">${escapeHtml(label)}</label>
+      ${meets.length ? `
+        <div style="margin:10px 0;">
+          ${meets.map(ev => `
+            <div class="meet-row">
+              <div class="meet-time">${escapeHtml(meetingTime(ev))}</div>
+              <div style="min-width:0;">
+                <div class="meet-title">${escapeHtml(ev.title)}</div>
+                ${ev.location ? `<div class="meet-loc">${escapeHtml(ev.location)}</div>` : ''}
+              </div>
+            </div>`).join('')}
+        </div>
+      ` : ''}
       ${due.length ? `
         <div class="dcard-tasks" style="margin:10px 0;">
           ${due.map(t => cardTaskRow(t, null)).join('')}
@@ -4007,6 +4116,8 @@ function attachHandlers(){
     state.categories.push({ id: uid('c'), label, featuredStat: 'remaining', noteText: '' });
     saveState(); render();
   };
+
+  document.querySelectorAll('[data-outlook-refresh]').forEach(el => el.onclick = () => loadOutlook(true));
 
   document.querySelectorAll('[data-cal-shift]').forEach(el => el.onclick = () => {
     calMonthOffset += parseInt(el.getAttribute('data-cal-shift'), 10);
