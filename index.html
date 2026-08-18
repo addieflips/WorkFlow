@@ -176,6 +176,7 @@
   .meet-done{ opacity:.45; }
   .meet-done .meet-title{ text-decoration:line-through; }
   .meet-next{ box-shadow:0 0 0 1px var(--accent); }
+  .debug-out{ margin:10px 0 0; padding:10px 12px; background:#F4F4F9; border:1px solid var(--border); border-radius:9px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; line-height:1.45; white-space:pre-wrap; word-break:break-word; max-height:340px; overflow:auto; }
   .due-pill{ font-size:10.5px; font-weight:600; color:var(--muted); background:var(--border); border-radius:999px; padding:1px 6px; }
   .due-now{ background:var(--primary-soft); color:var(--primary-dark); }
   .due-late{ background:#FDECEA; color:#D0453A; }
@@ -2788,6 +2789,50 @@ function viewCalendar(){
   `;
 }
 
+// Troubleshooting helper: shows the raw feed entry for a named meeting.
+let outlookDebugOpen = false;
+let outlookDebugQuery = '';
+let outlookDebugOut = '';
+let outlookDebugBusy = false;
+
+async function runOutlookDebug(){
+  const el = document.getElementById('outlook-debug-q');
+  const q = el ? el.value.trim() : outlookDebugQuery.trim();
+  outlookDebugQuery = q;
+  if (!q) { outlookDebugOut = 'Type part of the meeting title first.'; render(); return; }
+  outlookDebugBusy = true; outlookDebugOut = ''; render();
+  try {
+    const resp = await fetch('/.netlify/functions/outlook?debug=' + encodeURIComponent(q), { headers: authHeaders() });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.message || ('Failed (' + resp.status + ')'));
+    if (!data.matched) {
+      outlookDebugOut = 'No entry in the feed mentions "' + q + '".\nIf the meeting still shows in Dispatch, the page is holding an older fetch — hit refresh on the meetings bar.';
+    } else {
+      outlookDebugOut =
+        'Your email configured on the server: ' + (data.selfEmailConfigured ? 'yes' : 'NO — decline filtering is off') +
+        '\nMatching entries: ' + data.matched + '\n\n' + data.blocks.join('\n\n----------\n\n');
+    }
+  } catch(e){
+    outlookDebugOut = 'Error: ' + (e.message || 'unknown');
+  }
+  outlookDebugBusy = false;
+  render();
+}
+
+function outlookDebugPanel(){
+  if (!outlookDebugOpen) return '';
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Troubleshoot a meeting</label>
+      <p class="hint" style="margin:3px 0 9px;">Type part of the title. This shows the raw entry from Outlook so we can see why it's showing. Email addresses are partly masked.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input id="outlook-debug-q" placeholder="Part of the meeting title" value="${escapeAttr(outlookDebugQuery)}" style="max-width:280px;" />
+        <button data-outlook-debug-run class="btn btn-primary" style="padding:8px 14px;" ${outlookDebugBusy?'disabled':''}>${outlookDebugBusy ? 'Checking…' : 'Check'}</button>
+      </div>
+      ${outlookDebugOut ? `<pre class="debug-out">${escapeHtml(outlookDebugOut)}</pre>` : ''}
+    </div>`;
+}
+
 function outlookBar(){
   if (outlookStatus === 'off') return '';
   if (outlookStatus === 'loading') {
@@ -2809,7 +2854,9 @@ function outlookBar(){
     <div style="display:flex; align-items:center; gap:8px; margin:-6px 0 14px; flex-wrap:wrap;">
       <span class="subtle" style="font-size:13px;">${outlookEvents.length} meeting${outlookEvents.length===1?'':'s'} from Outlook</span>
       <button data-outlook-refresh class="icon-btn" title="Refresh meetings" style="width:26px;height:26px;">${icon('refresh',12)}</button>
-    </div>`;
+      <button data-outlook-debug-toggle class="btn btn-ghost" style="padding:3px 9px; font-size:12px;">${outlookDebugOpen ? 'Hide troubleshoot' : 'Troubleshoot'}</button>
+    </div>
+    ${outlookDebugPanel()}`;
 }
 
 function calendarDayPanel(key){
@@ -4172,6 +4219,13 @@ function attachHandlers(){
   };
 
   document.querySelectorAll('[data-outlook-refresh]').forEach(el => el.onclick = () => loadOutlook(true));
+
+  document.querySelectorAll('[data-outlook-debug-toggle]').forEach(el => el.onclick = () => {
+    outlookDebugOpen = !outlookDebugOpen; render();
+  });
+  document.querySelectorAll('[data-outlook-debug-run]').forEach(el => el.onclick = () => runOutlookDebug());
+  const dbgInput = document.getElementById('outlook-debug-q');
+  if (dbgInput) dbgInput.onkeydown = (e) => { if (e.key === 'Enter') runOutlookDebug(); };
 
   document.querySelectorAll('[data-cal-shift]').forEach(el => el.onclick = () => {
     calMonthOffset += parseInt(el.getAttribute('data-cal-shift'), 10);
