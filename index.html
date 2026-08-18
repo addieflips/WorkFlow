@@ -128,6 +128,7 @@
   .stat-big .num{ font-size:27px; font-weight:700; line-height:1; }
   .stat-big .lbl{ font-size:11.5px; color:var(--muted); }
   .note-input{ width:100%; height:33px; font-size:13.5px; font-weight:600; margin-bottom:2px; }
+  .note-aside{ height:29px; font-size:12.5px; font-weight:500; color:var(--muted); background:var(--bg); margin:4px 0 2px; }
   .count-edit{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
   .count-edit input{ font-size:12.5px; padding:6px 8px; }
   .dcard-bar{ height:5px; border-radius:3px; background:var(--border); overflow:hidden; margin-bottom:12px; }
@@ -510,6 +511,37 @@ function icon(name, size){
 }
 
 // ---------------- render ----------------
+// A render replaces the whole DOM, so anything half-typed in a focused field
+// would be thrown away — including by background refreshes the user didn't
+// trigger. Remember the field and put the text and caret back.
+function captureFocus(){
+  const el = document.activeElement;
+  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return null;
+  let sel = null;
+  if (el.id) {
+    sel = '#' + el.id.replace(/(["\\])/g, '\\$1');
+  } else {
+    for (const a of el.attributes) {
+      if (a.name.indexOf('data-') === 0) { sel = '[' + a.name + '="' + a.value.replace(/(["\\])/g, '\\$1') + '"]'; break; }
+    }
+  }
+  if (!sel) return null;
+  let start = null, end = null;
+  try { start = el.selectionStart; end = el.selectionEnd; } catch(e){}
+  return { sel, value: el.value, start, end };
+}
+
+function restoreFocus(sig){
+  if (!sig) return;
+  let el;
+  try { el = document.querySelector(sig.sel); } catch(e){ return; }
+  if (!el) return;
+  // What was being typed hasn't been committed to state yet, so it wins.
+  if (typeof sig.value === 'string' && el.value !== sig.value) el.value = sig.value;
+  el.focus();
+  if (sig.start !== null) { try { el.setSelectionRange(sig.start, sig.end); } catch(e){} }
+}
+
 function render(){
   const root = document.getElementById('root');
 
@@ -523,6 +555,7 @@ function render(){
   const prevScroll = prevMain ? prevMain.scrollTop : 0;
   const prevSide = document.querySelector('.sidebar');
   const prevSideScroll = prevSide ? prevSide.scrollTop : 0;
+  const focusSig = captureFocus();
 
   root.innerHTML = `
     <div class="app">
@@ -542,6 +575,7 @@ function render(){
   }
 
   attachHandlers();
+  restoreFocus(focusSig);
 }
 
 // ---------------- load failure (fail closed) ----------------
@@ -1189,6 +1223,12 @@ function categoryCard(c, key, tone, due){
     ? `<input data-card-note="${c.id}" class="note-input" placeholder="Type a note for this card..." value="${escapeAttr(c.noteText)}" />`
     : `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
 
+  // A note written while "Note" was pinned would otherwise become unreachable
+  // the moment the pin changed, so keep showing it whenever there's one saved.
+  const asideNote = (featured !== 'note' && (c.noteText || '').trim())
+    ? `<input data-card-note="${c.id}" class="note-input note-aside" title="Note" value="${escapeAttr(c.noteText)}" />`
+    : '';
+
   return `
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       ${tone ? `<span class="tone-flag">${toneLabel(tone, due)}</span>` : ''}
@@ -1201,6 +1241,7 @@ function categoryCard(c, key, tone, due){
         </div>
       </div>
       ${statHtml}
+      ${asideNote}
       <p class="hint" style="margin:2px 0 8px;">${rec.assigned} assigned · ${rec.completed} done</p>
       <div class="count-edit">
         <input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" placeholder="Assigned" />
@@ -3787,6 +3828,16 @@ function attachHandlers(){
     if (!cat) return;
     cat.noteText = el.value;
     saveState();
+  });
+
+  document.querySelectorAll('[data-card-note]').forEach(el => el.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const cat = state.categories.find(c => c.id === el.getAttribute('data-card-note'));
+    if (!cat) return;
+    cat.noteText = el.value;
+    saveState();
+    el.blur();
+    showToast('Note saved');
   });
 
   document.querySelectorAll('[data-tool-tab]').forEach(el => el.onclick = () => {
