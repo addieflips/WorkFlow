@@ -173,6 +173,9 @@
   .meet-time{ font-size:12px; font-weight:700; color:var(--accent); white-space:nowrap; min-width:62px; }
   .meet-title{ font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; }
   .meet-loc{ font-size:12px; color:var(--muted); margin-top:1px; overflow:hidden; text-overflow:ellipsis; }
+  .meet-done{ opacity:.45; }
+  .meet-done .meet-title{ text-decoration:line-through; }
+  .meet-next{ box-shadow:0 0 0 1px var(--accent); }
   .due-pill{ font-size:10.5px; font-weight:600; color:var(--muted); background:var(--border); border-radius:999px; padding:1px 6px; }
   .due-now{ background:var(--primary-soft); color:var(--primary-dark); }
   .due-late{ background:#FDECEA; color:#D0453A; }
@@ -718,16 +721,16 @@ function sidebarHtml(){
 }
 
 function mainBody(){
+  // Both Home and the calendar show meetings, so whichever loads first fetches.
+  if ((view === 'home' || view === 'calendar') && outlookStatus === 'idle') {
+    setTimeout(() => loadOutlook(), 0);
+  }
   if (view === 'home') return viewHome();
   if (view === 'tools') return viewTools();
   if (view === 'triage') return viewTriage();
   if (view === 'assistant') return viewAssistant();
   if (view === 'knowledge') return viewKnowledge();
-  if (view === 'calendar') {
-    // Fires once per session, the first time the calendar is opened.
-    if (outlookStatus === 'idle') setTimeout(() => loadOutlook(), 0);
-    return viewCalendar();
-  }
+  if (view === 'calendar') return viewCalendar();
   if (view === 'dashboard') return viewDashboard();
   if (view === 'categories') return viewCategories();
   if (view === 'templates') return viewTemplates();
@@ -811,11 +814,62 @@ function viewHome(){
 
     ${taskSearchQuery.trim() ? taskSearchResults() : `
     ${goalPanel()}
+    ${homeMeetingsPanel()}
     ${dueTodayPanel()}
     <div class="grid">
       ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone, it.due) : categoryCard(it.cat, key, it.tone, it.due)).join('')}
       ${addCardTile()}
     </div>`}
+  `;
+}
+
+function meetingEnded(ev){
+  if (ev.allDay) return false;
+  const e = outlookDate(ev.end || ev.start);
+  return !!e && e.getTime() < Date.now();
+}
+
+function homeMeetingsPanel(){
+  if (outlookStatus === 'off' || outlookStatus === 'loading' || outlookStatus === 'idle') return '';
+
+  if (outlookStatus === 'error') {
+    return `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="subtle" style="font-size:12.5px;">Meetings didn't load.</span>
+        <button data-outlook-refresh class="btn btn-ghost" style="padding:3px 9px; font-size:12px;">Retry</button>
+      </div>`;
+  }
+
+  const meets = meetingsOn(todayKey());
+  if (!meets.length) return '';
+
+  // The first meeting that hasn't finished yet gets the emphasis.
+  const nextIdx = meets.findIndex(ev => !meetingEnded(ev));
+  const remaining = meets.filter(ev => !meetingEnded(ev)).length;
+
+  return `
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <label class="section" style="margin:0;">Today's meetings · ${meets.length}</label>
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${remaining ? `<span class="subtle" style="font-size:12.5px;">${remaining} left</span>` : `<span class="subtle" style="font-size:12.5px;">All done</span>`}
+          <button data-outlook-refresh class="icon-btn" title="Refresh meetings" style="width:24px;height:24px;">${icon('refresh',11)}</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        ${meets.map((ev, i) => {
+          const done = meetingEnded(ev);
+          return `
+            <div class="meet-row${done?' meet-done':''}${i===nextIdx?' meet-next':''}">
+              <div class="meet-time">${escapeHtml(meetingTime(ev))}</div>
+              <div style="min-width:0;">
+                <div class="meet-title">${escapeHtml(ev.title)}</div>
+                ${ev.location ? `<div class="meet-loc">${escapeHtml(ev.location)}</div>` : ''}
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
   `;
 }
 
