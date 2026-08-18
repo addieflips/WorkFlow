@@ -134,9 +134,21 @@
   .dcard-bar{ height:5px; border-radius:3px; background:var(--border); overflow:hidden; margin-bottom:12px; }
   .dcard-bar-fill{ height:100%; background:var(--primary); }
   .dcard-tasks{ display:flex; flex-direction:column; gap:5px; margin-bottom:10px; }
-  .card-task-row{ display:flex; align-items:center; gap:7px; font-size:13px; cursor:pointer; }
+  .card-task-row{ display:flex; align-items:center; gap:7px; font-size:13px; }
+  /* two settings checkboxes reuse this class as a <label>, where clicking the
+     wording to toggle is the right behaviour */
+  label.card-task-row{ cursor:pointer; }
+  .task-text-input{ flex:1; min-width:0; border:1px solid transparent; background:transparent; border-radius:6px; padding:3px 5px; font-size:13px; font-family:inherit; color:var(--ink); }
+  .task-text-input:hover{ border-color:var(--border); background:#fff; }
+  .task-text-input:focus{ border-color:var(--primary); background:#fff; outline:none; }
+  .task-text-input.is-done{ text-decoration:line-through; color:var(--muted); }
+  .task-badges{ flex-shrink:0; display:inline-flex; align-items:center; gap:4px; }
   .card-task-row input[type=checkbox]{ width:14px; height:14px; flex-shrink:0; }
   .card-add-task{ height:30px; font-size:12.5px; margin-top:auto; }
+  .dcard-title-btn{ background:none; border:none; padding:0; cursor:pointer; color:var(--ink); font-family:inherit; text-align:left; }
+  .dcard-title-btn:hover{ color:var(--primary-dark); text-decoration:underline; }
+  .card-filed-link{ background:none; border:none; padding:4px 0 0; cursor:pointer; font-size:11.5px; color:var(--muted); font-family:inherit; text-align:left; }
+  .card-filed-link:hover{ color:var(--primary-dark); }
   .pin-menu{ display:none; position:absolute; top:30px; right:0; background:#fff; border:1px solid var(--border); border-radius:10px; padding:4px; flex-direction:column; min-width:150px; z-index:5; box-shadow:0 4px 14px rgba(32,34,58,.1); }
   .pin-menu.open{ display:flex; }
   .pin-menu button{ background:none; border:none; text-align:left; font-size:12.5px; padding:6px 8px; border-radius:6px; cursor:pointer; color:var(--ink); }
@@ -281,6 +293,8 @@ const DEFAULT_STATE = {
 
 let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 let view = 'home';
+let cardDetailId = null;   // category id, or '__general'
+let cardSearch = '';       // search box inside a card's detail screen
 let selectedFolderId = null; // null = all templates
 let editingTemplateId = null;
 let generatingTemplateId = null;
@@ -761,6 +775,7 @@ function mainBody(){
     setTimeout(() => loadOutlook(), 0);
   }
   if (view === 'home') return viewHome();
+  if (view === 'card') return viewCardDetail();
   if (view === 'tools') return viewTools();
   if (view === 'triage') return viewTriage();
   if (view === 'assistant') return viewAssistant();
@@ -938,7 +953,7 @@ function taskSearchResults(){
               <div style="font-size:13.5px; font-weight:600;">${escapeHtml(c.label)}</div>
               <div class="search-meta">Card · ${rec.assigned} assigned, ${rec.completed} done · ${open} open task${open===1?'':'s'}</div>
             </div>
-            <button data-goto-card class="icon-btn" title="Go to Home" style="width:26px;height:26px;flex-shrink:0;">${icon('chevronRight',13)}</button>
+            <button data-open-card="${c.id}" class="icon-btn" title="Open this card" style="width:26px;height:26px;flex-shrink:0;">${icon('chevronRight',13)}</button>
           </div>`;
         }).join('')}
         ${noteHits.map(c => `
@@ -1177,13 +1192,19 @@ function taskEditorPanel(t){
 function cardTaskRow(t, currentCatId){
   const others = taskCategoryIds(t).filter(id => id !== currentCatId)
     .map(id => (state.categories.find(c=>c.id===id)||{}).label).filter(Boolean);
+  const badges = `${others.length ? `<span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}`;
+  // This used to be a <label>, which meant clicking the text to select or fix it
+  // ticked the checkbox. Only the checkbox itself toggles now, and the text is a
+  // real input you can type in, select, and copy out of.
   return `
-    <label class="card-task-row">
-      <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} />
-      <span style="flex:1; ${t.done?'text-decoration:line-through;color:var(--muted);':''}">${escapeHtml(t.text)}${others.length ? ` <span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}</span>
+    <div class="card-task-row">
+      <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} title="${t.done?'Mark not done':'Mark done'}" />
+      <input data-task-text="${t.id}" class="task-text-input${t.done?' is-done':''}" value="${escapeAttr(t.text)}" />
+      ${badges ? `<span class="task-badges">${badges}</span>` : ''}
+      <button data-task-copy="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Copy this note">${icon('copy',11)}</button>
       <button data-open-task-editor="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Due date and waiting-on">${icon('calendar',11)}</button>
       <button data-task-delete="${t.id}" class="icon-btn danger" style="width:22px;height:22px;flex-shrink:0;" title="Remove">${icon('trash',11)}</button>
-    </label>
+    </div>
     ${editingTaskId===t.id ? taskEditorPanel(t) : ''}
   `;
 }
@@ -1198,17 +1219,23 @@ function dueBadge(t){
 
 function generalCard(key, tone, due){
   const tasks = state.tasks.filter(t => taskCategoryIds(t).length === 0);
-  const openCount = tasks.filter(t => !t.done || t.completedDate===key).length;
+  // The card shows what's still live plus anything checked off today, so ticking
+  // something doesn't make it vanish out from under you. Older finished tasks
+  // aren't gone — they're on the card's own screen.
+  const visible = tasks.filter(t => !t.done || t.completedDate===key);
+  const openCount = visible.length;
+  const filed = tasks.length - visible.length;
   return `
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       <div class="dcard-head">
-        <span class="dcard-title">General</span>
+        <button data-open-card="__general" class="dcard-title dcard-title-btn" title="Open this card">General</button>
       </div>
       <div class="stat-big"><span class="num">${openCount}</span><span class="lbl">open</span></div>
       <p class="hint" style="margin:2px 0 10px;">Tasks not tied to a category</p>
       <div class="dcard-tasks">
-        ${tasks.length ? tasks.map(t => cardTaskRow(t, null)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing here.</p>`}
+        ${visible.length ? visible.map(t => cardTaskRow(t, null)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing here.</p>`}
       </div>
+      ${filed ? `<button data-open-card="__general" class="card-filed-link">${filed} finished · search them</button>` : ''}
       <input data-card-task-input="__general" placeholder="Add a general task..." class="card-add-task" />
     </div>
   `;
@@ -1220,7 +1247,9 @@ function categoryCard(c, key, tone, due){
   const remaining = Math.max(0, rec.assigned - rec.completed);
   const pct = rec.assigned > 0 ? Math.min(100, Math.round((rec.completed/rec.assigned)*100)) : 0;
   const catTasks = state.tasks.filter(t => taskCategoryIds(t).includes(c.id));
-  const openCount = catTasks.filter(t => !t.done || t.completedDate===key).length;
+  const visible = catTasks.filter(t => !t.done || t.completedDate===key);
+  const openCount = visible.length;
+  const filed = catTasks.length - visible.length;
 
   const featured = c.featuredStat;
   const statHtml = featured === 'note'
@@ -1238,7 +1267,7 @@ function categoryCard(c, key, tone, due){
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       ${tone ? `<span class="tone-flag">${toneLabel(tone, due)}</span>` : ''}
       <div class="dcard-head">
-        <span class="dcard-title">${escapeHtml(c.label)}</span>
+        <button data-open-card="${c.id}" class="dcard-title dcard-title-btn" title="Open this card">${escapeHtml(c.label)}</button>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
         <button data-pin-toggle="${c.id}" class="icon-btn" title="Change pinned stat" style="width:26px;height:26px;">${icon('pin',13)}</button>
         <div class="pin-menu${openPinMenu === c.id ? ' open' : ''}" data-pin-menu="${c.id}">
@@ -1254,10 +1283,76 @@ function categoryCard(c, key, tone, due){
       </div>
       <div class="dcard-bar"><div class="dcard-bar-fill" style="width:${pct}%;"></div></div>
       <div class="dcard-tasks">
-        ${catTasks.length ? catTasks.map(t => cardTaskRow(t, c.id)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">No tasks yet.</p>`}
+        ${visible.length ? visible.map(t => cardTaskRow(t, c.id)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">No tasks yet.</p>`}
       </div>
+      ${filed ? `<button data-open-card="${c.id}" class="card-filed-link">${filed} finished · search them</button>` : ''}
       <input data-card-task-input="${c.id}" placeholder="Add a task to ${escapeAttr(c.label)}..." class="card-add-task" />
     </div>
+  `;
+}
+
+// ---------------- a single card's own screen ----------------
+function cardDetailTarget(){
+  if (cardDetailId === '__general') return { id:'__general', label:'General' };
+  const c = state.categories.find(x => x.id === cardDetailId);
+  return c ? { id:c.id, label:c.label } : null;
+}
+
+function taskIsInCard(t, cardId){
+  return cardId === '__general'
+    ? taskCategoryIds(t).length === 0
+    : taskCategoryIds(t).includes(cardId);
+}
+
+function viewCardDetail(){
+  const target = cardDetailTarget();
+  if (!target) { view = 'home'; return viewHome(); }
+
+  const all = state.tasks.filter(t => taskIsInCard(t, target.id));
+  const q = cardSearch.trim().toLowerCase();
+  const matches = q ? all.filter(t => (t.text||'').toLowerCase().includes(q)) : all;
+
+  const open = matches.filter(t => !t.done);
+  const done = matches.filter(t => t.done)
+    .sort((a,b) => (b.completedDate||'').localeCompare(a.completedDate||''));
+
+  // Finished tasks group under the day they were checked off, newest first.
+  const byDay = [];
+  done.forEach(t => {
+    const k = t.completedDate || '';
+    const last = byDay[byDay.length-1];
+    if (last && last.key === k) last.items.push(t);
+    else byDay.push({ key:k, items:[t] });
+  });
+
+  const doneTotal = all.filter(t => t.done).length;
+
+  return `
+    <div class="row" style="align-items:center; gap:8px; margin-bottom:2px;">
+      <button data-back-home class="icon-btn" title="Back to Home">${icon('chevronLeft',15)}</button>
+      <label class="section" style="margin:0;">${escapeHtml(target.label)}</label>
+    </div>
+    <p class="hint" style="margin:0 0 12px 34px;">${open.length} open · ${doneTotal} finished</p>
+
+    <input data-card-search value="${escapeAttr(cardSearch)}" placeholder="Search notes in ${escapeAttr(target.label)}..." style="margin-bottom:14px;" />
+
+    ${q && !matches.length ? `<p class="subtle" style="margin:0 0 14px;">Nothing in this card matches "${escapeHtml(cardSearch)}".</p>` : ''}
+
+    ${open.length ? `
+      <div class="card" style="margin-bottom:14px;">
+        <label class="section" style="margin:0 0 8px;">Open</label>
+        <div class="dcard-tasks" style="margin:0;">${open.map(t => cardTaskRow(t, target.id === '__general' ? null : target.id)).join('')}</div>
+      </div>` : ''}
+
+    ${byDay.length ? byDay.map(g => `
+      <div class="card" style="margin-bottom:10px;">
+        <label class="section" style="margin:0 0 8px;">${g.key ? escapeHtml(dateFromKey(g.key).toLocaleDateString(undefined,{weekday:'short', month:'short', day:'numeric'})) : 'Finished'}</label>
+        <div class="dcard-tasks" style="margin:0;">${g.items.map(t => cardTaskRow(t, target.id === '__general' ? null : target.id)).join('')}</div>
+      </div>`).join('') : ''}
+
+    ${!all.length ? `<p class="subtle" style="margin:0 0 14px;">Nothing in this card yet.</p>` : ''}
+
+    <input data-card-task-input="${target.id}" placeholder="Add a task to ${escapeAttr(target.label)}..." class="card-add-task" style="margin-top:6px;" />
   `;
 }
 
@@ -3808,6 +3903,27 @@ function attachHandlers(){
     saveState(); render();
   });
 
+  document.querySelectorAll('[data-open-card]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    cardDetailId = el.getAttribute('data-open-card');
+    cardSearch = '';
+    taskSearchQuery = '';
+    view = 'card';
+    const main = document.querySelector('.main');
+    if (main) main.scrollTop = 0;
+    render();
+  });
+
+  document.querySelectorAll('[data-back-home]').forEach(el => el.onclick = () => {
+    view = 'home'; cardDetailId = null; cardSearch = '';
+    render();
+  });
+
+  document.querySelectorAll('[data-card-search]').forEach(el => el.oninput = () => {
+    cardSearch = el.value;
+    render();
+  });
+
   document.querySelectorAll('[data-pin-toggle]').forEach(el => el.onclick = (e) => {
     e.stopPropagation();
     const id = el.getAttribute('data-pin-toggle');
@@ -4160,9 +4276,6 @@ function attachHandlers(){
     saveState(); render();
   };
 
-  const gotoCardBtn = document.querySelector('[data-goto-card]');
-  if (gotoCardBtn) gotoCardBtn.onclick = () => { taskSearchQuery = ''; render(); };
-
   const taskSearchEl = document.getElementById('task-search');
   if (taskSearchEl) taskSearchEl.oninput = () => {
     taskSearchQuery = taskSearchEl.value;
@@ -4226,6 +4339,34 @@ function attachHandlers(){
     t.done = el.checked;
     t.completedDate = el.checked ? todayKey() : null;
     saveState(); render();
+  });
+
+  // Saved on blur rather than every keystroke, so a re-render can't yank the
+  // cursor mid-word. No render() here — the text on screen is already correct.
+  document.querySelectorAll('[data-task-text]').forEach(el => {
+    el.onchange = () => {
+      const t = state.tasks.find(x => x.id === el.getAttribute('data-task-text'));
+      if (!t) return;
+      const text = el.value.trim();
+      if (!text) { el.value = t.text; return; }   // refuse to blank a note out
+      if (text === t.text) return;
+      t.text = text;
+      saveState();
+    };
+    el.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+      if (e.key === 'Escape') {
+        const t = state.tasks.find(x => x.id === el.getAttribute('data-task-text'));
+        if (t) el.value = t.text;
+        el.blur();
+      }
+    };
+  });
+
+  document.querySelectorAll('[data-task-copy]').forEach(el => el.onclick = () => {
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-task-copy'));
+    if (!t) return;
+    navigator.clipboard.writeText(t.text).then(() => showToast('Note copied'));
   });
 
   document.querySelectorAll('[data-task-delete]').forEach(el => el.onclick = () => {
