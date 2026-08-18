@@ -14,6 +14,20 @@ const DAYS_BACK = 120;
 const DAYS_FORWARD = 400;
 const MAX_OCCURRENCES = 400;
 
+// Your own address, so a meeting you declined can be told apart from one a
+// colleague declined. Set OUTLOOK_USER_EMAIL in Netlify (optional).
+const SELF_EMAIL = String(process.env.OUTLOOK_USER_EMAIL || '').trim().toLowerCase();
+
+function emailFromValue(v) {
+  return String(v || '').replace(/^mailto:/i, '').trim().toLowerCase();
+}
+
+// Outlook leaves cancelled meetings on the calendar with the title prefixed
+// until they're cleared, and STATUS often still reads CONFIRMED.
+function titleLooksCancelled(title) {
+  return /^\s*cancell?ed:/i.test(String(title || ''));
+}
+
 // ---------- ICS text helpers ----------
 
 // Long ICS lines wrap onto continuation lines starting with a space or tab.
@@ -205,6 +219,19 @@ function parseICS(text, winStartMs, winEndMs) {
       case 'DTEND': cur.end = parseDT(p.value, p.params); break;
       case 'RRULE': cur.rrule = parseRRule(p.value); break;
       case 'RECURRENCE-ID': cur.recurrenceId = parseDT(p.value, p.params); break;
+      case 'X-MICROSOFT-CDO-BUSYSTATUS': cur.busyStatus = p.value.toUpperCase(); break;
+      case 'PARTSTAT': // some feeds emit it as a bare property
+        if (p.value.toUpperCase() === 'DECLINED') cur.selfDeclined = true;
+        break;
+      case 'ATTENDEE': {
+        const partstat = (p.params.PARTSTAT || '').toUpperCase();
+        if (partstat !== 'DECLINED') break;
+        const who = emailFromValue(p.value);
+        // Without a configured address we can't tell whose decline it is, so we
+        // only act when it's definitely yours.
+        if (SELF_EMAIL && who === SELF_EMAIL) cur.selfDeclined = true;
+        break;
+      }
       case 'EXDATE':
         p.value.split(',').forEach((v) => {
           const d = parseDT(v, p.params);
@@ -239,8 +266,16 @@ function parseICS(text, winStartMs, winEndMs) {
     });
   };
 
+  // One gate for both one-off events and modified occurrences.
+  const isHidden = (ev) => {
+    if (ev.status === 'CANCELLED') return true;
+    if (titleLooksCancelled(ev.title)) return true;
+    if (ev.selfDeclined) return true;
+    return false;
+  };
+
   bases.forEach((ev) => {
-    if (ev.status === 'CANCELLED') return;
+    if (isHidden(ev)) return;
     if (!ev.start) return;
 
     if (ev.rrule) {
@@ -258,7 +293,7 @@ function parseICS(text, winStartMs, winEndMs) {
   });
 
   overrides.forEach((ev) => {
-    if (ev.status === 'CANCELLED') return;
+    if (isHidden(ev)) return;
     if (!ev.start) return;
     const ms = toMs(ev.start);
     if (ms >= winStartMs && ms <= winEndMs) push(ev, ev.start);
@@ -266,6 +301,35 @@ function parseICS(text, winStartMs, winEndMs) {
 
   out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
   return out;
+}
+
+// Partially masks addresses so raw output can be shared without exposing
+// everyone's email, while leaving enough to confirm a PARTSTAT match.
+function maskEmails(s) {
+  return String(s).replace(/([\w.+-]+)@([\w.-]+)/g, (full, local, domain) => {
+    if (local.length <= 2) return local[0] + '***@' + domain;
+    return local[0] + '***' + local[local.length - 1] + '@' + domain;
+  });
+}
+
+// Returns the raw VEVENT blocks whose text mentions `needle`, for troubleshooting
+// why a particular meeting is or isn't showing up.
+function rawVEvents(text, needle) {
+  const q = String(needle || '').toLowerCase();
+  const lines = unfold(text).split('\n');
+  const blocks = [];
+  let cur = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line === 'BEGIN:VEVENT') { cur = []; continue; }
+    if (line === 'END:VEVENT') {
+      if (cur && cur.join('\n').toLowerCase().includes(q)) blocks.push(cur.slice(0, 40));
+      cur = null;
+      continue;
+    }
+    if (cur) cur.push(line);
+  }
+  return blocks.slice(0, 5).map((b) => maskEmails(b.join('\n')));
 }
 
 // ---------- handler ----------
@@ -310,6 +374,22 @@ exports.handler = async function (event) {
     }
 
     const now = Date.now();
+
+    const debugQuery = ((event.queryStringParameters || {}).debug || '').trim();
+    if (debugQuery) {
+      const blocks = rawVEvents(text, debugQuery);
+      return {
+        statusCode: 200,
+        headers: { 'Cache-Control': 'no-store' },
+        body: JSON.stringify({
+          debug: true,
+          selfEmailConfigured: !!SELF_EMAIL,
+          matched: blocks.length,
+          blocks,
+        }),
+      };
+    }
+
     const events = parseICS(text, now - DAYS_BACK * 86400000, now + DAYS_FORWARD * 86400000);
 
     return {
