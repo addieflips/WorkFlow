@@ -134,15 +134,16 @@
   .dcard-bar{ height:5px; border-radius:3px; background:var(--border); overflow:hidden; margin-bottom:12px; }
   .dcard-bar-fill{ height:100%; background:var(--primary); }
   .dcard-tasks{ display:flex; flex-direction:column; gap:5px; margin-bottom:10px; }
-  .card-task-row{ display:flex; align-items:center; gap:7px; font-size:13px; }
+  .card-task-row{ display:flex; align-items:flex-start; gap:7px; font-size:13px; }
+  .card-task-row > input[type=checkbox], .card-task-row > .icon-btn{ margin-top:3px; }
   /* two settings checkboxes reuse this class as a <label>, where clicking the
      wording to toggle is the right behaviour */
   label.card-task-row{ cursor:pointer; }
-  .task-text-input{ flex:1; min-width:0; border:1px solid transparent; background:transparent; border-radius:6px; padding:3px 5px; font-size:13px; font-family:inherit; color:var(--ink); }
+  .task-text-input{ flex:1; min-width:0; border:1px solid transparent; background:transparent; border-radius:6px; padding:3px 5px; font-size:13px; font-family:inherit; line-height:1.45; color:var(--ink); resize:none; overflow:hidden; display:block; }
   .task-text-input:hover{ border-color:var(--border); background:#fff; }
   .task-text-input:focus{ border-color:var(--primary); background:#fff; outline:none; }
   .task-text-input.is-done{ text-decoration:line-through; color:var(--muted); }
-  .task-badges{ flex-shrink:0; display:inline-flex; align-items:center; gap:4px; }
+  .task-badges{ flex-shrink:0; display:inline-flex; align-items:center; gap:4px; margin-top:4px; }
   .card-task-row input[type=checkbox]{ width:14px; height:14px; flex-shrink:0; }
   .card-add-task{ height:30px; font-size:12.5px; margin-top:auto; }
   .dcard-title-btn{ background:none; border:none; padding:0; cursor:pointer; color:var(--ink); font-family:inherit; text-align:left; }
@@ -1199,7 +1200,7 @@ function cardTaskRow(t, currentCatId){
   return `
     <div class="card-task-row">
       <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} title="${t.done?'Mark not done':'Mark done'}" />
-      <input data-task-text="${t.id}" class="task-text-input${t.done?' is-done':''}" value="${escapeAttr(t.text)}" />
+      <textarea data-task-text="${t.id}" rows="1" class="task-text-input${t.done?' is-done':''}">${escapeHtml(t.text)}</textarea>
       ${badges ? `<span class="task-badges">${badges}</span>` : ''}
       <button data-task-copy="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Copy this note">${icon('copy',11)}</button>
       <button data-open-task-editor="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Due date and waiting-on">${icon('calendar',11)}</button>
@@ -4341,14 +4342,20 @@ function attachHandlers(){
     saveState(); render();
   });
 
+  // A note is a textarea so it wraps, but it shouldn't scroll or leave dead
+  // space — height follows the content, measured after every render and keystroke.
+  const fitTaskText = (el) => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+
   // Saved on blur rather than every keystroke, so a re-render can't yank the
   // cursor mid-word. No render() here — the text on screen is already correct.
   document.querySelectorAll('[data-task-text]').forEach(el => {
+    fitTaskText(el);
+    el.oninput = () => fitTaskText(el);
     el.onchange = () => {
       const t = state.tasks.find(x => x.id === el.getAttribute('data-task-text'));
       if (!t) return;
       const text = el.value.trim();
-      if (!text) { el.value = t.text; return; }   // refuse to blank a note out
+      if (!text) { el.value = t.text; fitTaskText(el); return; }   // refuse to blank a note out
       if (text === t.text) return;
       t.text = text;
       saveState();
@@ -4357,7 +4364,7 @@ function attachHandlers(){
       if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
       if (e.key === 'Escape') {
         const t = state.tasks.find(x => x.id === el.getAttribute('data-task-text'));
-        if (t) el.value = t.text;
+        if (t) { el.value = t.text; fitTaskText(el); }
         el.blur();
       }
     };
