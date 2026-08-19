@@ -153,6 +153,7 @@
   .task-badges{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:1px 0 0 5px; }
   .steps-collapsed{ display:inline-flex; align-items:center; gap:6px; background:none; border:1px solid var(--border); border-radius:8px; padding:5px 10px; margin-bottom:12px; cursor:pointer; font-size:12.5px; font-family:inherit; color:var(--muted); }
   .steps-collapsed:hover{ color:var(--primary-dark); border-color:var(--primary); }
+  .steps-read{ margin:0; padding-left:20px; display:flex; flex-direction:column; gap:6px; font-size:13px; line-height:1.45; }
   .steps-list{ margin:0 0 10px; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
   .steps-list li{ font-size:13px; }
   .steps-list li > .task-text-input{ display:inline-block; vertical-align:top; }
@@ -2155,6 +2156,44 @@ const CT_FORMS = {
   },
 };
 
+// Contact tracking types are named after case types, so the matching card's
+// steps can sit alongside the builder. Loose match, since a card might be
+// "Swaps" while the form is "Swap".
+function categoryForLabel(label){
+  if (!label) return null;
+  const norm = x => (x||'').toLowerCase().replace(/[^a-z]/g,'');
+  const want = norm(label);
+  return state.categories.find(c => {
+    const have = norm(c.label);
+    return have === want || have === want + 's' || want === have + 's';
+  }) || null;
+}
+
+function ctStepsColumn(){
+  const form = CT_FORMS[ctType];
+  const c = form ? categoryForLabel(form.label) : null;
+
+  if (!c || !Array.isArray(c.steps) || !c.steps.length){
+    return `
+      <div class="card" style="margin-bottom:16px;">
+        <label class="section">Process</label>
+        <p class="subtle" style="margin:6px 0 0; font-size:12.5px;">
+          ${c ? `No steps saved on the ${escapeHtml(c.label)} card yet. Open that card from Home and paste them in — they'll show up here.`
+              : `No card named "${escapeHtml(form ? form.label : '')}" yet. Make one on Home and add its steps, and they'll show up here.`}
+        </p>
+      </div>`;
+  }
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="row" style="align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <label class="section" style="margin:0;">How to do a ${escapeHtml(c.label)}</label>
+        <button data-open-card="${c.id}" class="icon-btn" title="Open this card to edit the steps">${icon('pencil',12)}</button>
+      </div>
+      <ol class="steps-read">${c.steps.map(st => `<li>${escapeHtml(st)}</li>`).join('')}</ol>
+    </div>`;
+}
+
 function ctOutput(){
   const form = CT_FORMS[ctType];
   return form ? form.build(ctFields) : '';
@@ -2164,7 +2203,9 @@ function viewCT(){
   const form = CT_FORMS[ctType];
   const out = ctOutput();
   return `
-    <div class="card" style="margin-bottom:16px; max-width:640px;">
+    <div class="two-col">
+    ${ctStepsColumn()}
+    <div class="card" style="margin-bottom:16px;">
       <label class="section">Contact tracking</label>
       <p class="hint" style="margin:3px 0 10px;">Fill in the boxes, copy the note. Formats come from your saved processes.</p>
 
@@ -2193,6 +2234,7 @@ function viewCT(){
         <div class="ct-out">${escapeHtml(out)}</div>
         ${form.note ? `<p class="hint" style="margin-top:9px;">${escapeHtml(form.note)}</p>` : ''}
       </div>
+    </div>
     </div>
   `;
 }
