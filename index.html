@@ -48,6 +48,7 @@
   .sidebar .hint{ color:var(--sidebar-muted); }
   .nav-item.active .count{ color:#FFD9C7; }
   .nav-bottom{ margin-top:auto; padding-top:10px; border-top:1px solid #2C2E4A; }
+  .build-stamp{ font-size:10px; color:#6B6E8F; padding:8px 8px 2px; letter-spacing:.02em; }
   .nav-group{ display:flex; flex-direction:column; gap:1px; }
   .nav-sep{ height:1px; background:var(--border); margin:10px 8px; }
   .nav-sub{ display:flex; flex-direction:column; gap:1px; margin:1px 0 1px 10px; padding-left:8px; border-left:1px solid var(--border); }
@@ -327,6 +328,9 @@
 
 <script>
 const STORAGE_KEY = 'dispatch-state-v2';
+// Bumped every time this file changes. Shown at the bottom of the sidebar so
+// there is never any doubt about which build the browser is actually running.
+const BUILD_ID = '2026-08-19 · 14';
 const DEFAULT_STATE = {
   sender: { name: '', email: '' },
   roles: [
@@ -874,6 +878,7 @@ function sidebarHtml(){
             ${NAV_ITEMS.map(i => navRow(i, { sub:true })).join('')}
             <p class="hint" style="margin:6px 0 2px 8px;">Tap a pin to keep it at the top.</p>
           </div>` : ''}
+        <div class="build-stamp" title="Which version of Dispatch is loaded">Build ${BUILD_ID}</div>
       </div>
     </aside>
   `;
