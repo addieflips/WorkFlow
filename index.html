@@ -157,8 +157,6 @@
   .stat-big{ display:flex; align-items:baseline; gap:6px; margin-bottom:2px; }
   .stat-big .num{ font-size:27px; font-weight:700; line-height:1; }
   .stat-big .lbl{ font-size:11.5px; color:var(--muted); }
-  .note-input{ width:100%; height:33px; font-size:13.5px; font-weight:600; margin-bottom:2px; }
-  .note-aside{ height:29px; font-size:12.5px; font-weight:500; color:var(--muted); background:var(--bg); margin:4px 0 2px; }
   .count-edit{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
   .count-edit input{ font-size:12.5px; padding:6px 8px; }
   .dcard-bar{ height:5px; border-radius:3px; background:var(--border); overflow:hidden; margin-bottom:12px; }
@@ -318,6 +316,7 @@
   .tone-red .tone-flag{ background:#C13B30; color:#fff; }
   .tone-amber .tone-flag{ background:#A8730F; color:#fff; }
   .tone-green .tone-flag{ background:#2F7A4F; color:#fff; }
+  .link-btn{ background:none; border:none; padding:0; font-size:11px; font-weight:600; color:var(--primary); cursor:pointer; text-decoration:underline; }
   .dupe-pill{ font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:#FDECEA; color:#C13B30; border:1px solid #F3C9C4; cursor:pointer; }
   .dupe-pill:hover{ background:#C13B30; color:#fff; }
 </style>
@@ -908,7 +907,6 @@ function mainBody(){
 const PIN_OPTIONS = [
   { val: 'remaining', label: 'Remaining' },
   { val: 'open', label: 'Open tasks' },
-  { val: 'note', label: 'Note' },
 ];
 const PIN_LABELS = { remaining: 'remaining', open: 'open tasks' };
 
@@ -918,7 +916,9 @@ let openPinMenu = null;
 
 function ensureCategoryDefaults(c){
   if (!c.featuredStat) c.featuredStat = 'remaining';
-  if (c.noteText === undefined) c.noteText = '';
+  // Notes were removed from the cards. Any card still pinned to one shows a
+  // count instead. Existing noteText is left in the data, just not displayed.
+  if (c.featuredStat === 'note') c.featuredStat = 'remaining';
 
   // A card can hold more than one process — a swap with downline and one
   // without are different sequences under the same case type. Older cards
@@ -1022,7 +1022,7 @@ function viewHome(){
       </div>
     </div>
     <div class="field" style="max-width:340px;">
-      <input id="task-search" placeholder="Search cards, notes and tasks" value="${escapeAttr(taskSearchQuery)}" />
+      <input id="task-search" placeholder="Search cards and tasks" value="${escapeAttr(taskSearchQuery)}" />
     </div>
 
     ${taskSearchQuery.trim() ? taskSearchResults() : `
@@ -1093,7 +1093,7 @@ function homeMeetingsPanel(){
 function taskSearchResults(){
   const q = taskSearchQuery.trim().toLowerCase();
   const hits = state.tasks.filter(t => (t.text||'').toLowerCase().includes(q));
-  const noteHits = state.categories.filter(c => (c.noteText||'').toLowerCase().includes(q));
+  const noteHits = [];
   const cardHits = state.categories.filter(c => (c.label||'').toLowerCase().includes(q));
   const total = hits.length + noteHits.length + cardHits.length;
 
@@ -1343,7 +1343,10 @@ function taskEditorPanel(t){
           <input type="date" data-task-due="${t.id}" value="${escapeAttr(t.dueDate || '')}" style="font-size:12.5px; padding:5px 7px;" />
         </div>
         <div>
-          <label class="hint" style="display:block; margin-bottom:2px;">Waiting on</label>
+          <label class="hint" style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:2px;">
+            <span>Waiting on</span>
+            <button data-manage-waiting class="link-btn" title="Add, rename or delete the options in this list">Edit list</button>
+          </label>
           <select data-task-waiting="${t.id}" style="font-size:12.5px; padding:5px 7px;">
             ${waitingChoicesFor(t.waitingOn).map(o => `<option value="${escapeAttr(o)}" ${(t.waitingOn||'')===o?'selected':''}>${o ? escapeHtml(o) : 'Nobody'}</option>`).join('')}
             <option value="__add__">+ Add someone...</option>
@@ -1426,16 +1429,8 @@ function categoryCard(c, key, tone, due){
   const filed = catTasks.length - visible.length;
 
   const featured = c.featuredStat;
-  const statHtml = featured === 'note'
-    ? `<input data-card-note="${c.id}" class="note-input" placeholder="Type a note for this card..." value="${escapeAttr(c.noteText)}" />`
-    : `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
-
-  // The note used to be reachable only when it was the pinned stat, which meant
-  // digging through the pin menu to edit a line of text. It's always here now;
-  // pinning it just promotes it to the big slot.
-  const asideNote = featured !== 'note'
-    ? `<input data-card-note="${c.id}" class="note-input note-aside" placeholder="Add a note..." title="Note for this card" value="${escapeAttr(c.noteText)}" />`
-    : '';
+  const statHtml = `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
+  const asideNote = '';
 
   return `
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
@@ -4287,24 +4282,6 @@ function attachHandlers(){
     saveState(); render();
   });
 
-  document.querySelectorAll('[data-card-note]').forEach(el => el.onchange = () => {
-    const id = el.getAttribute('data-card-note');
-    const cat = state.categories.find(c=>c.id===id);
-    if (!cat) return;
-    cat.noteText = el.value;
-    saveState();
-  });
-
-  document.querySelectorAll('[data-card-note]').forEach(el => el.onkeydown = (e) => {
-    if (e.key !== 'Enter') return;
-    const cat = state.categories.find(c => c.id === el.getAttribute('data-card-note'));
-    if (!cat) return;
-    cat.noteText = el.value;
-    saveState();
-    el.blur();
-    showToast('Note saved');
-  });
-
   document.querySelectorAll('[data-tool-tab]').forEach(el => el.onclick = () => {
     toolsTab = el.getAttribute('data-tool-tab');
     const main = document.querySelector('.main');
@@ -4974,6 +4951,17 @@ function attachHandlers(){
     if (!t) return;
     t.dueDate = el.value || null;
     saveState();
+  });
+
+  // Jump straight to the list editor with it already open — it lives on a Tools
+  // tab that isn't in the sidebar unless pinned, which made it hard to find.
+  document.querySelectorAll('[data-manage-waiting]').forEach(el => el.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    editingTaskId = null;
+    view = 'tools';
+    toolsTab = 'waiting';
+    waitingEditOpen = true;
+    render();
   });
 
   document.querySelectorAll('[data-waiting-edit-toggle]').forEach(el => el.onclick = () => {
