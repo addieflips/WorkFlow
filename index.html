@@ -318,6 +318,8 @@
   .tone-red .tone-flag{ background:#C13B30; color:#fff; }
   .tone-amber .tone-flag{ background:#A8730F; color:#fff; }
   .tone-green .tone-flag{ background:#2F7A4F; color:#fff; }
+  .dupe-pill{ font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:#FDECEA; color:#C13B30; border:1px solid #F3C9C4; cursor:pointer; }
+  .dupe-pill:hover{ background:#C13B30; color:#fff; }
 </style>
 </head>
 <body>
@@ -397,6 +399,8 @@ let showMoreNav = false;
 const WAITING_DEFAULTS = ['Member', 'Team Lead', 'Manager', 'Department', 'Other'];
 
 function waitingOptions(){
+  // Seed only when the key has never been set. An empty array means "I deleted
+  // them all on purpose" and must survive a reload.
   if (!Array.isArray(state.waitingOptions)) state.waitingOptions = WAITING_DEFAULTS.slice();
   return state.waitingOptions;
 }
@@ -411,6 +415,18 @@ function waitingChoicesFor(current){
 
 function waitingUsageCount(name){
   return state.tasks.filter(t => !t.done && t.waitingOn === name).length;
+}
+
+// Two separate task records can hold the same wording. On screen they look
+// identical, so ticking one leaves the twin open and the task appears to come
+// back. Surface that rather than letting it look like a save failure.
+function normTaskText(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
+
+function openDuplicatesOf(t){
+  if (!t || t.done) return [];
+  const n = normTaskText(t.text);
+  if (!n) return [];
+  return state.tasks.filter(x => x !== t && !x.done && normTaskText(x.text) === n);
 }
 
 function isOverdue(t){
@@ -507,7 +523,14 @@ async function loadState(){
     if (t.dueDate === undefined) t.dueDate = null;
     if (t.waitingOn === undefined) t.waitingOn = '';
   });
-  if (!Array.isArray(state.waitingOptions) || !state.waitingOptions.length) {
+  const seenTaskIds = new Set();
+  state.tasks.forEach(t => {
+    if (!t.id || seenTaskIds.has(t.id)) t.id = uid('task');
+    seenTaskIds.add(t.id);
+  });
+  // Deliberately not checking .length here: emptying the list is a valid state,
+  // and re-seeding it made deleting every option impossible.
+  if (!Array.isArray(state.waitingOptions)) {
     state.waitingOptions = WAITING_DEFAULTS.slice();
   }
   if (!Array.isArray(state.pinnedNav)) state.pinnedNav = ['home','templates','triage','assistant'];
@@ -1335,7 +1358,11 @@ function taskEditorPanel(t){
 function cardTaskRow(t, currentCatId){
   const others = taskCategoryIds(t).filter(id => id !== currentCatId)
     .map(id => (state.categories.find(c=>c.id===id)||{}).label).filter(Boolean);
-  const badges = `${others.length ? `<span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}`;
+  const dupes = openDuplicatesOf(t);
+  const dupeBadge = dupes.length
+    ? `<button data-task-dedupe="${t.id}" class="dupe-pill" title="There ${dupes.length===1?'is':'are'} ${dupes.length} other open cop${dupes.length===1?'y':'ies'} of this task. Click to remove ${dupes.length===1?'it':'them'}.">${dupes.length+1} copies</button>`
+    : '';
+  const badges = `${others.length ? `<span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dupeBadge}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}`;
   // This used to be a <label>, which meant clicking the text to select or fix it
   // ticked the checkbox. Only the checkbox itself toggles now, and the text is a
   // real input you can type in, select, and copy out of.
@@ -2414,6 +2441,7 @@ function waitingListEditor(){
           <input id="waiting-new" placeholder="Add someone or a group..." style="flex:1; font-size:13px;" />
           <button data-waiting-add class="btn btn-primary" style="padding:8px 14px;">Add</button>
         </div>
+        ${opts.length ? `<button data-waiting-clear class="btn btn-ghost" style="margin-top:10px; padding:6px 12px; font-size:12px; color:#C13B30;">Remove all ${opts.length} and start fresh</button>` : `<p class="hint" style="margin:10px 0 0;">List is empty. Add your own above, or use "+ Add someone..." on any task.</p>`}
       `}
     </div>`;
 }
@@ -4649,6 +4677,22 @@ function attachHandlers(){
   const cancelAddCardBtn = document.querySelector('[data-cancel-add-card]');
   if (cancelAddCardBtn) cancelAddCardBtn.onclick = () => { addingCard = false; newCardLabel = ''; render(); };
 
+  document.querySelectorAll('[data-task-dedupe]').forEach(el => el.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-task-dedupe'));
+    if (!t) return;
+    const dupes = openDuplicatesOf(t);
+    if (!dupes.length) return;
+    const msg = 'This task exists ' + (dupes.length+1) + ' times.\n\n"' + t.text + '"\n\n'
+      + 'Keep this one and remove the other ' + dupes.length + '? Nothing else is touched.';
+    if (!confirm(msg)) return;
+    const ids = new Set(dupes.map(x => x.id));
+    state.tasks = state.tasks.filter(x => !ids.has(x.id));
+    if (ids.has(editingTaskId)) editingTaskId = null;
+    saveState(); render();
+    showToast('Removed ' + dupes.length + ' duplicate' + (dupes.length===1?'':'s'));
+  });
+
   document.querySelectorAll('[data-task-toggle]').forEach(el => el.onchange = () => {
     const id = el.getAttribute('data-task-toggle');
     const t = state.tasks.find(x=>x.id===id);
@@ -4981,6 +5025,18 @@ function attachHandlers(){
     if (j < 0 || j >= opts.length) return;
     const tmp = opts[i]; opts[i] = opts[j]; opts[j] = tmp;
     saveState(); render();
+  });
+
+  document.querySelectorAll('[data-waiting-clear]').forEach(el => el.onclick = () => {
+    const opts = waitingOptions();
+    const inUse = state.tasks.filter(t => !t.done && t.waitingOn).length;
+    const msg = 'Remove all ' + opts.length + ' options from the dropdown?\n\n'
+      + (inUse ? inUse + ' open task' + (inUse===1?'':'s') + ' currently waiting on someone will keep their label and stay on this page.\n\n' : '')
+      + 'You can then add your own.';
+    if (!confirm(msg)) return;
+    state.waitingOptions = [];
+    saveState(); render();
+    showToast('List cleared \u2014 add your own below');
   });
 
   document.querySelectorAll('[data-waiting-delete]').forEach(el => el.onclick = () => {
