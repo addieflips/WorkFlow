@@ -135,15 +135,22 @@
   .dcard-bar-fill{ height:100%; background:var(--primary); }
   .dcard-tasks{ display:flex; flex-direction:column; gap:5px; margin-bottom:10px; }
   .card-task-row{ display:flex; align-items:flex-start; gap:7px; font-size:13px; }
-  .card-task-row > input[type=checkbox], .card-task-row > .icon-btn{ margin-top:3px; }
+  .card-task-row > input[type=checkbox]{ margin-top:6px; }
+  .task-main{ flex:1; min-width:0; }
+  /* Buttons stay out of the way until you're actually on the note — three icons
+     alongside the text left it about 150px wide in a card. */
+  .task-actions{ display:none; gap:2px; padding:1px 0 2px 4px; }
+  .task-actions .icon-btn{ width:22px; height:22px; flex-shrink:0; }
+  .card-task-row:hover .task-actions, .card-task-row:focus-within .task-actions{ display:flex; }
+  @media (hover: none){ .task-actions{ display:flex; } }
   /* two settings checkboxes reuse this class as a <label>, where clicking the
      wording to toggle is the right behaviour */
   label.card-task-row{ cursor:pointer; }
-  .task-text-input{ flex:1; min-width:0; border:1px solid transparent; background:transparent; border-radius:6px; padding:3px 5px; font-size:13px; font-family:inherit; line-height:1.45; color:var(--ink); resize:none; overflow:hidden; display:block; }
+  .task-text-input{ width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent; border-radius:6px; padding:3px 5px; font-size:13px; font-family:inherit; line-height:1.45; color:var(--ink); resize:none; overflow:hidden; display:block; }
   .task-text-input:hover{ border-color:var(--border); background:#fff; }
   .task-text-input:focus{ border-color:var(--primary); background:#fff; outline:none; }
   .task-text-input.is-done{ text-decoration:line-through; color:var(--muted); }
-  .task-badges{ flex-shrink:0; display:inline-flex; align-items:center; gap:4px; margin-top:4px; }
+  .task-badges{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:1px 0 0 5px; }
   .card-task-row input[type=checkbox]{ width:14px; height:14px; flex-shrink:0; }
   .card-add-task{ height:30px; font-size:12.5px; margin-top:auto; }
   .dcard-title-btn{ background:none; border:none; padding:0; cursor:pointer; color:var(--ink); font-family:inherit; text-align:left; }
@@ -288,7 +295,8 @@ const DEFAULT_STATE = {
   deadlineRules: [],      // custom rules you add
   committeeMeetings: {},  // { 'YYYY-MM': { first:'YYYY-MM-DD', second:'YYYY-MM-DD' } }
   teamGoal: null,    // { text, notes, target, progress, done, duration, startDate, endDate, repeat }
-  dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed } } }
+  dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed, carried } } }
+  countsCarriedFor: null,  // last day unfinished counts were rolled forward into
   tasks: [],         // { id, text, done, createdDate, completedDate }
 };
 
@@ -851,8 +859,39 @@ function sortedHomeCards(key){
     });
 }
 
+// Counts used to reset to zero every midnight, so anything assigned and not
+// finished simply vanished. Whatever was still outstanding on the last day you
+// used the app gets rolled into today's assigned instead. Runs once per day —
+// after that, today's numbers are yours to edit freely.
+function carryForwardCounts(key){
+  if (!state.dailyCounts) state.dailyCounts = {};
+  if (state.countsCarriedFor === key) return;
+
+  const prior = Object.keys(state.dailyCounts).filter(k => k < key).sort();
+  const prev = prior[prior.length - 1];
+
+  if (prev){
+    const today = state.dailyCounts[key] = state.dailyCounts[key] || {};
+    Object.keys(state.dailyCounts[prev]).forEach(catId => {
+      const rec = state.dailyCounts[prev][catId] || {};
+      const left = Math.max(0, (rec.assigned||0) - (rec.completed||0));
+      if (!left) return;
+      const cur = today[catId] = today[catId] || { assigned:0, completed:0 };
+      // Don't stomp on numbers already entered for today.
+      if (cur.assigned === 0 && cur.completed === 0){
+        cur.assigned = left;
+        cur.carried = left;
+      }
+    });
+  }
+
+  state.countsCarriedFor = key;
+  saveState();
+}
+
 function viewHome(){
   const key = todayKey();
+  carryForwardCounts(key);
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
 
   return `
@@ -1200,11 +1239,15 @@ function cardTaskRow(t, currentCatId){
   return `
     <div class="card-task-row">
       <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} title="${t.done?'Mark not done':'Mark done'}" />
-      <textarea data-task-text="${t.id}" rows="1" class="task-text-input${t.done?' is-done':''}">${escapeHtml(t.text)}</textarea>
-      ${badges ? `<span class="task-badges">${badges}</span>` : ''}
-      <button data-task-copy="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Copy this note">${icon('copy',11)}</button>
-      <button data-open-task-editor="${t.id}" class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" title="Due date and waiting-on">${icon('calendar',11)}</button>
-      <button data-task-delete="${t.id}" class="icon-btn danger" style="width:22px;height:22px;flex-shrink:0;" title="Remove">${icon('trash',11)}</button>
+      <div class="task-main">
+        <textarea data-task-text="${t.id}" rows="1" class="task-text-input${t.done?' is-done':''}">${escapeHtml(t.text)}</textarea>
+        ${badges ? `<div class="task-badges">${badges}</div>` : ''}
+        <div class="task-actions">
+          <button data-task-copy="${t.id}" class="icon-btn" title="Copy this note">${icon('copy',11)}</button>
+          <button data-open-task-editor="${t.id}" class="icon-btn" title="Due date and waiting-on">${icon('calendar',11)}</button>
+          <button data-task-delete="${t.id}" class="icon-btn danger" title="Remove">${icon('trash',11)}</button>
+        </div>
+      </div>
     </div>
     ${editingTaskId===t.id ? taskEditorPanel(t) : ''}
   `;
@@ -1277,7 +1320,7 @@ function categoryCard(c, key, tone, due){
       </div>
       ${statHtml}
       ${asideNote}
-      <p class="hint" style="margin:2px 0 8px;">${rec.assigned} assigned · ${rec.completed} done</p>
+      <p class="hint" style="margin:2px 0 8px;">${rec.assigned} assigned · ${rec.completed} done${rec.carried ? ` · ${rec.carried} carried over` : ''}</p>
       <div class="count-edit">
         <input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" placeholder="Assigned" />
         <input type="number" min="0" data-count-field="${c.id}_completed" value="${rec.completed}" placeholder="Completed" />
