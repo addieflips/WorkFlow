@@ -326,7 +326,7 @@
   .wait-banner-col{ min-width:0; }
   .wait-note{ display:flex; align-items:flex-start; gap:7px; padding:3px 0; font-size:13px; }
   .wait-note input[type="checkbox"]{ width:14px; height:14px; margin-top:2px; flex-shrink:0; }
-  .wait-note-text{ flex:1; min-width:0; overflow-wrap:anywhere; }
+  .wait-note-text{ flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .link-btn{ background:none; border:none; padding:0; font-size:11px; font-weight:600; color:var(--primary); cursor:pointer; text-decoration:underline; }
   .dupe-pill{ font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:#FDECEA; color:#C13B30; border:1px solid #F3C9C4; cursor:pointer; }
   .dupe-pill:hover{ background:#C13B30; color:#fff; }
@@ -340,7 +340,7 @@
 const STORAGE_KEY = 'dispatch-state-v2';
 // Bumped every time this file changes. Shown at the bottom of the sidebar so
 // there is never any doubt about which build the browser is actually running.
-const BUILD_ID = '2026-08-19 · 17';
+const BUILD_ID = '2026-08-19 · 18';
 const DEFAULT_STATE = {
   sender: { name: '', email: '' },
   roles: [
@@ -1048,7 +1048,7 @@ function waitingBadges(){
               return `
               <div class="wait-note">
                 <input type="checkbox" data-task-toggle="${t.id}" title="Mark done" />
-                <span class="wait-note-text">${escapeHtml(t.text)}</span>
+                <span class="wait-note-text" title="${escapeAttr(t.text)}">${escapeHtml(t.text)}</span>
                 ${d !== null ? `<span class="wait-age${old ? ' wait-age-old' : ''}">${d}d</span>` : ''}
               </div>`;
             }).join('')}
