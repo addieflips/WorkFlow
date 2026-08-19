@@ -122,7 +122,8 @@
 
   .two-col{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
   .home-split{ display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
-  .home-side{ min-width:0; }
+  .home-side{ min-width:0; position:sticky; top:4px; max-height:calc(100vh - 40px); overflow-y:auto; padding-right:2px; }
+  @media (max-width: 900px){ .home-side{ position:static; max-height:none; overflow:visible; } }
   .home-cards{ min-width:0; }
   @media (max-width: 900px){ .home-split{ grid-template-columns:1fr; } }
   @media (max-width: 1180px){ .home-split{ grid-template-columns:270px 1fr; } }
@@ -958,9 +959,9 @@ function viewHome(){
     ${taskSearchQuery.trim() ? taskSearchResults() : `
     <div class="home-split">
       <div class="home-side">
-        ${goalPanel()}
-        ${homeMeetingsPanel()}
         ${dueTodayPanel()}
+        ${homeMeetingsPanel()}
+        ${goalPanel()}
       </div>
       <div class="grid home-cards">
         ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone, it.due) : categoryCard(it.cat, key, it.tone, it.due)).join('')}
