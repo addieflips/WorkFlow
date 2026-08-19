@@ -153,6 +153,12 @@
   .task-badges{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:1px 0 0 5px; }
   .steps-collapsed{ display:inline-flex; align-items:center; gap:6px; background:none; border:1px solid var(--border); border-radius:8px; padding:5px 10px; margin-bottom:12px; cursor:pointer; font-size:12.5px; font-family:inherit; color:var(--muted); }
   .steps-collapsed:hover{ color:var(--primary-dark); border-color:var(--primary); }
+  .proc-tabs{ display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px; }
+  .proc-tab{ background:none; border:1px solid var(--border); border-radius:999px; padding:4px 11px; font-size:12px; font-family:inherit; color:var(--muted); cursor:pointer; }
+  .proc-tab:hover{ border-color:var(--primary); color:var(--primary-dark); }
+  .proc-tab.active{ background:var(--primary); border-color:var(--primary); color:#fff; }
+  .proc-add{ padding:4px 9px; font-weight:700; }
+  .proc-name{ flex:1; min-width:0; height:26px; font-size:12.5px; font-weight:600; }
   .steps-read{ margin:0; padding-left:20px; display:flex; flex-direction:column; gap:6px; font-size:13px; line-height:1.45; }
   .steps-list{ margin:0 0 10px; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
   .steps-list li{ font-size:13px; }
@@ -315,6 +321,7 @@ let view = 'home';
 let cardDetailId = null;   // category id, or '__general'
 let cardSearch = '';       // search box inside a card's detail screen
 let stepsOpen = null;      // which card's process steps are expanded
+let stepsTab = {};         // cardId -> which process is showing
 let selectedFolderId = null; // null = all templates
 let editingTemplateId = null;
 let generatingTemplateId = null;
@@ -830,8 +837,24 @@ let openPinMenu = null;
 function ensureCategoryDefaults(c){
   if (!c.featuredStat) c.featuredStat = 'remaining';
   if (c.noteText === undefined) c.noteText = '';
-  if (!Array.isArray(c.steps)) c.steps = [];   // the process for this card
+
+  // A card can hold more than one process — a swap with downline and one
+  // without are different sequences under the same case type. Older cards
+  // stored a single `steps` array; fold that into the new shape once.
+  if (!Array.isArray(c.processes)){
+    c.processes = (Array.isArray(c.steps) && c.steps.length)
+      ? [{ id: uid('proc'), name: 'Standard', steps: c.steps.slice() }]
+      : [];
+    delete c.steps;
+  }
   return c;
+}
+
+function activeProcess(c){
+  ensureCategoryDefaults(c);
+  if (!c.processes.length) return null;
+  const want = stepsTab[c.id];
+  return c.processes.find(p => p.id === want) || c.processes[0];
 }
 
 // Cards are ordered by WHEN their work is due, soonest first. A card whose
@@ -1372,12 +1395,18 @@ function cardStepsPanel(target){
   ensureCategoryDefaults(c);
 
   const open = stepsOpen === c.id;
+  const totalSteps = c.processes.reduce((n,p) => n + p.steps.length, 0);
+
   if (!open){
     return `
       <button data-steps-toggle="${c.id}" class="steps-collapsed">
-        ${icon('list',12)} ${c.steps.length ? `${c.steps.length} steps` : 'Add the steps for this card'}
+        ${icon('list',12)} ${totalSteps
+          ? (c.processes.length > 1 ? `${c.processes.length} processes` : `${totalSteps} steps`)
+          : 'Add the steps for this card'}
       </button>`;
   }
+
+  const proc = activeProcess(c);
 
   return `
     <div class="card" style="margin-bottom:14px;">
@@ -1385,17 +1414,32 @@ function cardStepsPanel(target){
         <label class="section" style="margin:0;">How to do a ${escapeHtml(c.label)}</label>
         <button data-steps-toggle="${c.id}" class="icon-btn" title="Hide steps">${icon('chevronUp',13)}</button>
       </div>
-      ${c.steps.length ? `<ol class="steps-list">${c.steps.map((st,i) => `
-        <li>
-          <textarea data-step-text="${c.id}" data-step-i="${i}" rows="1" class="task-text-input">${escapeHtml(st)}</textarea>
-          <div class="step-actions">
-            <button data-step-move="${c.id}" data-step-i="${i}" data-dir="-1" class="icon-btn" title="Move up" ${i===0?'disabled':''}>${icon('chevronUp',11)}</button>
-            <button data-step-move="${c.id}" data-step-i="${i}" data-dir="1" class="icon-btn" title="Move down" ${i===c.steps.length-1?'disabled':''}>${icon('chevronDown',11)}</button>
-            <button data-step-delete="${c.id}" data-step-i="${i}" class="icon-btn danger" title="Remove step">${icon('trash',11)}</button>
-          </div>
-        </li>`).join('')}</ol>`
-        : `<p class="subtle" style="margin:0 0 8px; font-size:12.5px;">No steps yet. Add the first one below.</p>`}
-      <input data-step-add="${c.id}" placeholder="Add a step, or paste a whole list..." class="card-add-task" />
+
+      <div class="proc-tabs">
+        ${c.processes.map(p => `
+          <button data-proc-tab="${c.id}" data-proc-id="${p.id}" class="proc-tab${proc && p.id===proc.id?' active':''}">${escapeHtml(p.name)}</button>`).join('')}
+        <button data-proc-add="${c.id}" class="proc-tab proc-add" title="Add another process">+</button>
+      </div>
+
+      ${!proc ? `<p class="subtle" style="margin:0 0 8px; font-size:12.5px;">No process yet. Hit + to start one — a swap with downline and one without can live side by side here.</p>` : `
+        <div class="row" style="align-items:center; gap:4px; margin-bottom:6px;">
+          <input data-proc-name="${c.id}" data-proc-id="${proc.id}" value="${escapeAttr(proc.name)}" class="proc-name" title="Rename this process" />
+          <button data-proc-delete="${c.id}" data-proc-id="${proc.id}" class="icon-btn danger" title="Delete this process">${icon('trash',11)}</button>
+        </div>
+
+        ${proc.steps.length ? `<ol class="steps-list">${proc.steps.map((st,i) => `
+          <li>
+            <textarea data-step-text="${c.id}" data-proc-id="${proc.id}" data-step-i="${i}" rows="1" class="task-text-input">${escapeHtml(st)}</textarea>
+            <div class="step-actions">
+              <button data-step-move="${c.id}" data-proc-id="${proc.id}" data-step-i="${i}" data-dir="-1" class="icon-btn" title="Move up" ${i===0?'disabled':''}>${icon('chevronUp',11)}</button>
+              <button data-step-move="${c.id}" data-proc-id="${proc.id}" data-step-i="${i}" data-dir="1" class="icon-btn" title="Move down" ${i===proc.steps.length-1?'disabled':''}>${icon('chevronDown',11)}</button>
+              <button data-step-delete="${c.id}" data-proc-id="${proc.id}" data-step-i="${i}" class="icon-btn danger" title="Remove step">${icon('trash',11)}</button>
+            </div>
+          </li>`).join('')}</ol>`
+          : `<p class="subtle" style="margin:0 0 8px; font-size:12.5px;">No steps yet. Add one below, or paste a whole list.</p>`}
+
+        <input data-step-add="${c.id}" data-proc-id="${proc.id}" placeholder="Add a step, or paste a whole list..." class="card-add-task" />
+      `}
     </div>`;
 }
 
@@ -2173,7 +2217,10 @@ function ctStepsColumn(){
   const form = CT_FORMS[ctType];
   const c = form ? categoryForLabel(form.label) : null;
 
-  if (!c || !Array.isArray(c.steps) || !c.steps.length){
+  if (c) ensureCategoryDefaults(c);
+  const proc = c ? activeProcess(c) : null;
+
+  if (!proc || !proc.steps.length){
     return `
       <div class="card" style="margin-bottom:16px;">
         <label class="section">Process</label>
@@ -2190,7 +2237,12 @@ function ctStepsColumn(){
         <label class="section" style="margin:0;">How to do a ${escapeHtml(c.label)}</label>
         <button data-open-card="${c.id}" class="icon-btn" title="Open this card to edit the steps">${icon('pencil',12)}</button>
       </div>
-      <ol class="steps-read">${c.steps.map(st => `<li>${escapeHtml(st)}</li>`).join('')}</ol>
+      ${c.processes.length > 1 ? `
+        <div class="proc-tabs">
+          ${c.processes.map(p => `
+            <button data-proc-tab="${c.id}" data-proc-id="${p.id}" class="proc-tab${p.id===proc.id?' active':''}">${escapeHtml(p.name)}</button>`).join('')}
+        </div>` : ''}
+      <ol class="steps-read">${proc.steps.map(st => `<li>${escapeHtml(st)}</li>`).join('')}</ol>
     </div>`;
 }
 
@@ -4512,18 +4564,58 @@ function attachHandlers(){
     render();
   });
 
+  const procOf = (el, attr) => {
+    const c = state.categories.find(x => x.id === el.getAttribute(attr));
+    if (!c) return [null, null];
+    ensureCategoryDefaults(c);
+    const p = c.processes.find(x => x.id === el.getAttribute('data-proc-id'));
+    return [c, p || null];
+  };
+
+  document.querySelectorAll('[data-proc-tab]').forEach(el => el.onclick = () => {
+    stepsTab[el.getAttribute('data-proc-tab')] = el.getAttribute('data-proc-id');
+    render();
+  });
+
+  document.querySelectorAll('[data-proc-add]').forEach(el => el.onclick = () => {
+    const c = state.categories.find(x => x.id === el.getAttribute('data-proc-add'));
+    if (!c) return;
+    ensureCategoryDefaults(c);
+    const p = { id: uid('proc'), name: `Process ${c.processes.length + 1}`, steps: [] };
+    c.processes.push(p);
+    stepsTab[c.id] = p.id;
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-proc-name]').forEach(el => el.onchange = () => {
+    const [c, p] = procOf(el, 'data-proc-name');
+    if (!c || !p) return;
+    const name = el.value.trim();
+    if (!name) { el.value = p.name; return; }
+    p.name = name;
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-proc-delete]').forEach(el => el.onclick = () => {
+    const [c, p] = procOf(el, 'data-proc-delete');
+    if (!c || !p) return;
+    if (!confirm(`Delete "${p.name}" and its ${p.steps.length} step${p.steps.length===1?'':'s'}?`)) return;
+    c.processes = c.processes.filter(x => x.id !== p.id);
+    delete stepsTab[c.id];
+    saveState(); render();
+  });
+
   document.querySelectorAll('[data-step-add]').forEach(el => {
     const addSteps = (raw) => {
-      const c = state.categories.find(x => x.id === el.getAttribute('data-step-add'));
-      if (!c) return;
-      ensureCategoryDefaults(c);
+      const [c, p] = procOf(el, 'data-step-add');
+      if (!c || !p) return;
       // One step per line, so a whole process can be pasted in at once.
       // Leading bullets and numbering get stripped — paste from anywhere.
       const lines = raw.split(/\r?\n/)
         .map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
         .filter(Boolean);
       if (!lines.length) return;
-      lines.forEach(l => c.steps.push(l));
+      lines.forEach(l => p.steps.push(l));
       el.value = '';
       saveState(); render();
     };
@@ -4545,34 +4637,34 @@ function attachHandlers(){
     fitTaskText(el);
     el.oninput = () => fitTaskText(el);
     el.onchange = () => {
-      const c = state.categories.find(x => x.id === el.getAttribute('data-step-text'));
+      const [c, p] = procOf(el, 'data-step-text');
       const i = parseInt(el.getAttribute('data-step-i'), 10);
-      if (!c || !c.steps[i]) return;
+      if (!c || !p || p.steps[i] === undefined) return;
       const text = el.value.trim();
-      if (!text) { el.value = c.steps[i]; fitTaskText(el); return; }
-      c.steps[i] = text;
+      if (!text) { el.value = p.steps[i]; fitTaskText(el); return; }
+      p.steps[i] = text;
       saveState();
     };
   });
 
   document.querySelectorAll('[data-step-move]').forEach(el => el.onclick = () => {
-    const c = state.categories.find(x => x.id === el.getAttribute('data-step-move'));
+    const [c, p] = procOf(el, 'data-step-move');
     const i = parseInt(el.getAttribute('data-step-i'), 10);
     const dir = parseInt(el.getAttribute('data-dir'), 10);
-    if (!c) return;
+    if (!c || !p) return;
     const j = i + dir;
-    if (j < 0 || j >= c.steps.length) return;
-    const [moved] = c.steps.splice(i, 1);
-    c.steps.splice(j, 0, moved);
+    if (j < 0 || j >= p.steps.length) return;
+    const [moved] = p.steps.splice(i, 1);
+    p.steps.splice(j, 0, moved);
     saveState(); render();
   });
 
   document.querySelectorAll('[data-step-delete]').forEach(el => el.onclick = () => {
-    const c = state.categories.find(x => x.id === el.getAttribute('data-step-delete'));
+    const [c, p] = procOf(el, 'data-step-delete');
     const i = parseInt(el.getAttribute('data-step-i'), 10);
-    if (!c || !c.steps[i]) return;
+    if (!c || !p || p.steps[i] === undefined) return;
     if (!confirm('Remove this step?')) return;
-    c.steps.splice(i, 1);
+    p.steps.splice(i, 1);
     saveState(); render();
   });
 
