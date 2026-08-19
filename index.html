@@ -151,6 +151,15 @@
   .task-text-input:focus{ border-color:var(--primary); background:#fff; outline:none; }
   .task-text-input.is-done{ text-decoration:line-through; color:var(--muted); }
   .task-badges{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:1px 0 0 5px; }
+  .steps-collapsed{ display:inline-flex; align-items:center; gap:6px; background:none; border:1px solid var(--border); border-radius:8px; padding:5px 10px; margin-bottom:12px; cursor:pointer; font-size:12.5px; font-family:inherit; color:var(--muted); }
+  .steps-collapsed:hover{ color:var(--primary-dark); border-color:var(--primary); }
+  .steps-list{ margin:0 0 10px; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
+  .steps-list li{ font-size:13px; }
+  .steps-list li > .task-text-input{ display:inline-block; vertical-align:top; }
+  .step-actions{ display:none; gap:2px; padding-left:4px; }
+  .step-actions .icon-btn{ width:22px; height:22px; }
+  .steps-list li:hover .step-actions, .steps-list li:focus-within .step-actions{ display:flex; }
+  @media (hover: none){ .step-actions{ display:flex; } }
   .card-task-row input[type=checkbox]{ width:14px; height:14px; flex-shrink:0; }
   .card-add-task{ height:30px; font-size:12.5px; margin-top:auto; }
   .dcard-title-btn{ background:none; border:none; padding:0; cursor:pointer; color:var(--ink); font-family:inherit; text-align:left; }
@@ -304,6 +313,7 @@ let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 let view = 'home';
 let cardDetailId = null;   // category id, or '__general'
 let cardSearch = '';       // search box inside a card's detail screen
+let stepsOpen = null;      // which card's process steps are expanded
 let selectedFolderId = null; // null = all templates
 let editingTemplateId = null;
 let generatingTemplateId = null;
@@ -518,6 +528,8 @@ function icon(name, size){
     pin: '<path d="M12 21s-6.5-5.8-6.5-11A6.5 6.5 0 0112 3a6.5 6.5 0 016.5 6.5C18.5 15.2 12 21 12 21z"/><circle cx="12" cy="9.7" r="2"/>',
     chevronRight: '<path d="M9.5 5l7 7-7 7"/>',
     chevronDown: '<path d="M5 9.5l7 7 7-7"/>',
+    chevronUp: '<path d="M5 14.5l7-7 7 7"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',
     chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     refresh: '<path d="M20 11a8 8 0 10-1.8 6.1"/><path d="M20 5v6h-6"/>',
@@ -817,6 +829,7 @@ let openPinMenu = null;
 function ensureCategoryDefaults(c){
   if (!c.featuredStat) c.featuredStat = 'remaining';
   if (c.noteText === undefined) c.noteText = '';
+  if (!Array.isArray(c.steps)) c.steps = [];   // the process for this card
   return c;
 }
 
@@ -1348,6 +1361,43 @@ function taskIsInCard(t, cardId){
     : taskCategoryIds(t).includes(cardId);
 }
 
+// The steps for a case type belong with the case type, not in a separate tab
+// you'd have to remember to open. Editable in place so a process change is a
+// five-second fix.
+function cardStepsPanel(target){
+  if (target.id === '__general') return '';   // General isn't a case type
+  const c = state.categories.find(x => x.id === target.id);
+  if (!c) return '';
+  ensureCategoryDefaults(c);
+
+  const open = stepsOpen === c.id;
+  if (!open){
+    return `
+      <button data-steps-toggle="${c.id}" class="steps-collapsed">
+        ${icon('list',12)} ${c.steps.length ? `${c.steps.length} steps` : 'Add the steps for this card'}
+      </button>`;
+  }
+
+  return `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="row" style="align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <label class="section" style="margin:0;">How to do a ${escapeHtml(c.label)}</label>
+        <button data-steps-toggle="${c.id}" class="icon-btn" title="Hide steps">${icon('chevronUp',13)}</button>
+      </div>
+      ${c.steps.length ? `<ol class="steps-list">${c.steps.map((st,i) => `
+        <li>
+          <textarea data-step-text="${c.id}" data-step-i="${i}" rows="1" class="task-text-input">${escapeHtml(st)}</textarea>
+          <div class="step-actions">
+            <button data-step-move="${c.id}" data-step-i="${i}" data-dir="-1" class="icon-btn" title="Move up" ${i===0?'disabled':''}>${icon('chevronUp',11)}</button>
+            <button data-step-move="${c.id}" data-step-i="${i}" data-dir="1" class="icon-btn" title="Move down" ${i===c.steps.length-1?'disabled':''}>${icon('chevronDown',11)}</button>
+            <button data-step-delete="${c.id}" data-step-i="${i}" class="icon-btn danger" title="Remove step">${icon('trash',11)}</button>
+          </div>
+        </li>`).join('')}</ol>`
+        : `<p class="subtle" style="margin:0 0 8px; font-size:12.5px;">No steps yet. Add the first one below.</p>`}
+      <input data-step-add="${c.id}" placeholder="Add a step, or paste a whole list..." class="card-add-task" />
+    </div>`;
+}
+
 function viewCardDetail(){
   const target = cardDetailTarget();
   if (!target) { view = 'home'; return viewHome(); }
@@ -1372,6 +1422,7 @@ function viewCardDetail(){
   const doneTotal = all.filter(t => t.done).length;
 
   return `
+    ${cardStepsPanel(target)}
     <div class="row" style="align-items:center; gap:8px; margin-bottom:2px;">
       <button data-back-home class="icon-btn" title="Back to Home">${icon('chevronLeft',15)}</button>
       <label class="section" style="margin:0;">${escapeHtml(target.label)}</label>
@@ -4411,6 +4462,76 @@ function attachHandlers(){
         el.blur();
       }
     };
+  });
+
+  document.querySelectorAll('[data-steps-toggle]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-steps-toggle');
+    stepsOpen = (stepsOpen === id) ? null : id;
+    render();
+  });
+
+  document.querySelectorAll('[data-step-add]').forEach(el => {
+    const addSteps = (raw) => {
+      const c = state.categories.find(x => x.id === el.getAttribute('data-step-add'));
+      if (!c) return;
+      ensureCategoryDefaults(c);
+      // One step per line, so a whole process can be pasted in at once.
+      // Leading bullets and numbering get stripped — paste from anywhere.
+      const lines = raw.split(/\r?\n/)
+        .map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+        .filter(Boolean);
+      if (!lines.length) return;
+      lines.forEach(l => c.steps.push(l));
+      el.value = '';
+      saveState(); render();
+    };
+
+    el.onkeydown = (e) => {
+      if (e.key !== 'Enter') return;
+      if (el.value.trim()) addSteps(el.value);
+    };
+
+    el.onpaste = (e) => {
+      const raw = (e.clipboardData || window.clipboardData).getData('text');
+      if (!raw || !/\r?\n/.test(raw)) return;   // single line pastes behave normally
+      e.preventDefault();
+      addSteps(raw);
+    };
+  });
+
+  document.querySelectorAll('[data-step-text]').forEach(el => {
+    fitTaskText(el);
+    el.oninput = () => fitTaskText(el);
+    el.onchange = () => {
+      const c = state.categories.find(x => x.id === el.getAttribute('data-step-text'));
+      const i = parseInt(el.getAttribute('data-step-i'), 10);
+      if (!c || !c.steps[i]) return;
+      const text = el.value.trim();
+      if (!text) { el.value = c.steps[i]; fitTaskText(el); return; }
+      c.steps[i] = text;
+      saveState();
+    };
+  });
+
+  document.querySelectorAll('[data-step-move]').forEach(el => el.onclick = () => {
+    const c = state.categories.find(x => x.id === el.getAttribute('data-step-move'));
+    const i = parseInt(el.getAttribute('data-step-i'), 10);
+    const dir = parseInt(el.getAttribute('data-dir'), 10);
+    if (!c) return;
+    const j = i + dir;
+    if (j < 0 || j >= c.steps.length) return;
+    const [moved] = c.steps.splice(i, 1);
+    c.steps.splice(j, 0, moved);
+    saveState(); render();
+  });
+
+  document.querySelectorAll('[data-step-delete]').forEach(el => el.onclick = () => {
+    const c = state.categories.find(x => x.id === el.getAttribute('data-step-delete'));
+    const i = parseInt(el.getAttribute('data-step-i'), 10);
+    if (!c || !c.steps[i]) return;
+    if (!confirm('Remove this step?')) return;
+    c.steps.splice(i, 1);
+    saveState(); render();
   });
 
   document.querySelectorAll('[data-task-copy]').forEach(el => el.onclick = () => {
