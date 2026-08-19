@@ -124,11 +124,28 @@
   .two-col{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
   .home-split{ display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
   .home-side{ min-width:0; position:sticky; top:4px; max-height:calc(100vh - 40px); overflow-y:auto; padding-right:2px; }
-  @media (max-width: 780px){ .home-side{ position:static; max-height:none; overflow:visible; } }
-  .home-cards{ min-width:0; }
+  @media (max-width: 600px){ .home-side{ position:static; max-height:none; overflow:visible; } }
+  .home-cards{ min-width:0; align-items:stretch; }
+  .home-cards .dcard{ height:100%; }
   @media (max-width: 1180px){ .home-split{ grid-template-columns:260px 1fr; } }
-  @media (max-width: 780px){ .home-split{ grid-template-columns:1fr; } }
-  @media (max-width: 820px){ .two-col{ grid-template-columns:1fr; } .app{ flex-direction:column; height:auto; } .sidebar{ width:100%; flex-direction:row; flex-wrap:wrap; } .nav-bottom{ margin-top:0; border-top:none; } }
+  @media (max-width: 1000px){ .home-split{ grid-template-columns:240px 1fr; gap:12px; } }
+  @media (max-width: 880px){
+    .home-split{ grid-template-columns:215px 1fr; gap:10px; }
+    .sidebar{ width:190px; padding:12px 8px; }
+    .main{ padding:18px 16px 50px; }
+  }
+  @media (max-width: 700px){
+    .home-split{ grid-template-columns:200px 1fr; }
+    .sidebar{ width:164px; }
+    .main{ padding:14px 10px 40px; }
+    .grid{ grid-template-columns:repeat(auto-fill, minmax(170px,1fr)); gap:8px; }
+  }
+  @media (max-width: 600px){ .home-split{ grid-template-columns:1fr; } }
+  @media (max-width: 820px){ .two-col{ grid-template-columns:1fr; } }
+  /* Only fold the sidebar into a top row on genuinely small screens. At 820px
+     this fired on scaled laptop displays, dropping the left nav and letting it
+     scroll away with the page. */
+  @media (max-width: 600px){ .app{ flex-direction:column; height:auto; } .sidebar{ width:100%; flex-direction:row; flex-wrap:wrap; } .nav-bottom{ margin-top:0; border-top:none; } }
 
   .toast{ position:fixed; top:18px; right:18px; background:var(--ink); color:#fff; padding:9px 16px; border-radius:10px; font-size:13.5px; z-index:50; }
   .output-box{ white-space:pre-wrap; font-size:14px; line-height:1.6; min-height:180px; }
@@ -1351,7 +1368,7 @@ function generalCard(key, tone, due){
   // The card shows what's still live plus anything checked off today, so ticking
   // something doesn't make it vanish out from under you. Older finished tasks
   // aren't gone — they're on the card's own screen.
-  const visible = tasks.filter(t => !t.done || t.completedDate===key);
+  const visible = tasks.filter(t => !t.done);
   const openCount = visible.length;
   const filed = tasks.length - visible.length;
   return `
@@ -1376,7 +1393,7 @@ function categoryCard(c, key, tone, due){
   const remaining = Math.max(0, rec.assigned - rec.completed);
   const pct = rec.assigned > 0 ? Math.min(100, Math.round((rec.completed/rec.assigned)*100)) : 0;
   const catTasks = state.tasks.filter(t => taskCategoryIds(t).includes(c.id));
-  const visible = catTasks.filter(t => !t.done || t.completedDate===key);
+  const visible = catTasks.filter(t => !t.done);
   const openCount = visible.length;
   const filed = catTasks.length - visible.length;
 
@@ -4638,6 +4655,9 @@ function attachHandlers(){
     t.done = el.checked;
     t.completedDate = el.checked ? todayKey() : null;
     saveState(); render();
+    // Finished tasks leave the card front immediately, so say what happened —
+    // otherwise ticking one just looks like the row vanished.
+    if (el.checked) showToast('Done \u00b7 filed behind the card');
   });
 
   // A note is a textarea so it wraps, but it shouldn't scroll or leave dead
