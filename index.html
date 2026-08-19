@@ -3,26 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dispatch — Email Templates</title>
+<title>Dispatch</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2064%2064%27%3E%3Crect%20width%3D%2764%27%20height%3D%2764%27%20rx%3D%2714%27%20fill%3D%27%2320223A%27%2F%3E%3Cpath%20d%3D%27M12%2032v14a4%204%200%20004%204h32a4%204%200%20004-4V32H38a6%206%200%2001-12%200z%27%20fill%3D%27%23FF8A65%27%2F%3E%3Cpath%20d%3D%27M32%208v18M32%2026l-8-8M32%2026l8-8%27%20fill%3D%27none%27%20stroke%3D%27%23FF8A65%27%20stroke-width%3D%277%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2064%2064%27%3E%3Crect%20width%3D%2764%27%20height%3D%2764%27%20rx%3D%2714%27%20fill%3D%27%2320223A%27%2F%3E%3Cpath%20d%3D%27M12%2032v14a4%204%200%20004%204h32a4%204%200%20004-4V32H38a6%206%200%2001-12%200z%27%20fill%3D%27%23FF8A65%27%2F%3E%3Cpath%20d%3D%27M32%208v18M32%2026l-8-8M32%2026l8-8%27%20fill%3D%27none%27%20stroke%3D%27%23FF8A65%27%20stroke-width%3D%277%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E">
+<meta name="theme-color" content="#20223A">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   *{ box-sizing:border-box; }
   :root{
-    --bg:#F6F6FB; --sidebar:#FAFAFA; --card:#FFFFFF; --border:#E8E8F1; --ink:#20223A; --muted:#7A7C99;
-    --primary:#5B54E8; --primary-dark:#4842C9; --primary-soft:#EEEDFD;
+    --bg:#F7F5F3; --sidebar:#20223A; --card:#FFFFFF; --border:#E9E5E1; --ink:#20223A; --muted:#7C7772;
+    --primary:#C74A18; --primary-dark:#B23F12; --primary-soft:#FDECE3;
     --accent:#FF8A65; --accent-soft:#FFEFE8;
+    --sidebar-ink:#E7E5EE; --sidebar-muted:#9A98AC; --sidebar-hover:#2C2E4A;
   }
   html,body{ height:100%; margin:0; }
   body{ font-family:'Inter',Arial,sans-serif; background:var(--bg); color:var(--ink); font-size:15px; }
   ::-webkit-scrollbar{ width:8px; height:8px; }
-  ::-webkit-scrollbar-thumb{ background:#D9D9EA; border-radius:4px; }
+  ::-webkit-scrollbar-thumb{ background:#D8D2CC; border-radius:4px; }
   svg{ display:block; flex-shrink:0; }
   textarea,input,select{ outline:none; font-family:'Inter',Arial,sans-serif; }
   .app{ display:flex; height:100vh; overflow:hidden; }
 
   /* sidebar */
-  .sidebar{ width:250px; flex-shrink:0; background:var(--sidebar); border-right:1px solid var(--border); display:flex; flex-direction:column; padding:16px 12px; overflow-y:auto; }
+  .sidebar{ width:250px; flex-shrink:0; background:var(--sidebar); border-right:1px solid #2C2E4A; display:flex; flex-direction:column; padding:16px 12px; overflow-y:auto; }
   .logo-row{ display:flex; align-items:center; gap:8px; padding:4px 6px 14px; }
   .logo-mark{ width:28px; height:28px; border-radius:8px; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; flex-shrink:0; }
   .logo-text{ font-weight:700; font-size:15px; }
@@ -36,26 +40,27 @@
   .nav-title{ font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; padding:10px 8px 6px; display:flex; align-items:center; justify-content:space-between; }
   .nav-title button{ background:none; border:none; color:var(--muted); cursor:pointer; padding:2px; border-radius:6px; display:flex; }
   .nav-title button:hover{ background:var(--primary-soft); color:var(--primary-dark); }
-  .nav-item{ display:flex; align-items:center; gap:8px; padding:8px 8px; border-radius:9px; cursor:pointer; color:var(--ink); font-size:13.5px; }
-  .nav-item:hover{ background:#F0EFFA; }
-  .nav-item.active{ background:var(--primary-soft); color:var(--primary-dark); font-weight:600; }
+  .nav-item{ display:flex; align-items:center; gap:8px; padding:8px 8px; border-radius:9px; cursor:pointer; color:var(--sidebar-ink); font-size:13.5px; }
+  .nav-item:hover{ background:var(--sidebar-hover); }
+  .nav-item.active{ background:var(--primary); color:#fff; font-weight:600; }
   .nav-item .lbl{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .nav-item .count{ font-size:11px; color:var(--muted); }
-  .nav-bottom{ margin-top:auto; padding-top:10px; border-top:1px solid var(--border); }
+  .nav-item .count{ font-size:11px; color:var(--sidebar-muted); }
+  .nav-item.active .count{ color:#FFD9C7; }
+  .nav-bottom{ margin-top:auto; padding-top:10px; border-top:1px solid #2C2E4A; }
   .nav-group{ display:flex; flex-direction:column; gap:1px; }
   .nav-sep{ height:1px; background:var(--border); margin:10px 8px; }
   .nav-sub{ display:flex; flex-direction:column; gap:1px; margin:1px 0 1px 10px; padding-left:8px; border-left:1px solid var(--border); }
-  .nav-item-sub{ font-size:13px; padding:6px 8px; color:var(--muted); gap:6px; }
+  .nav-item-sub{ font-size:13px; padding:6px 8px; color:var(--sidebar-muted); gap:6px; }
   .nav-more{ color:var(--muted); font-size:13px; }
   .nav-row{ display:flex; align-items:center; gap:2px; }
   .nav-row-sub .nav-item{ min-width:0; }
   .nav-pin{ display:flex; align-items:center; justify-content:center; width:24px; height:24px; border:none; background:none; color:var(--border); cursor:pointer; border-radius:6px; flex-shrink:0; padding:0; }
   .nav-pin:hover{ color:var(--muted); background:var(--primary-soft); }
   .nav-pin.on{ color:var(--primary); }
-  .nav-item-sub.active{ color:var(--primary-dark); }
+  .nav-item-sub.active{ background:var(--sidebar-hover); color:#fff; }
   .nav-add{ color:var(--muted); opacity:.75; }
   .nav-add:hover{ opacity:1; }
-  .nav-item-quiet{ color:var(--muted); }
+  .nav-item-quiet{ color:var(--sidebar-muted); }
   .nav-badge{ font-size:10.5px; font-weight:700; background:#C13B30; color:#fff; border-radius:999px; padding:1px 6px; }
 
   /* main */
@@ -313,6 +318,7 @@ const DEFAULT_STATE = {
   teamGoal: null,    // { text, notes, target, progress, done, duration, startDate, endDate, repeat }
   dailyCounts: {},   // { 'YYYY-MM-DD': { [categoryId]: { assigned, completed, carried } } }
   countsCarriedFor: null,  // last day unfinished counts were rolled forward into
+  ctCardLinks: {},   // contact tracking type -> the card whose steps to show
   tasks: [],         // { id, text, done, createdDate, completedDate }
 };
 
@@ -2201,21 +2207,46 @@ const CT_FORMS = {
 };
 
 // Contact tracking types are named after case types, so the matching card's
-// steps can sit alongside the builder. Loose match, since a card might be
-// "Swaps" while the form is "Swap".
-function categoryForLabel(label){
-  if (!label) return null;
+// steps can sit alongside the builder. Names in practice don't line up exactly
+// — the form says "Swap" and the card says "Swaps w/o downline" — so this
+// tries progressively looser matches, and the user can override it outright.
+function categoryForCT(typeKey){
+  const linked = (state.ctCardLinks || {})[typeKey];
+  if (linked){
+    const c = state.categories.find(x => x.id === linked);
+    if (c) return c;
+  }
+
+  const form = CT_FORMS[typeKey];
+  if (!form) return null;
+
   const norm = x => (x||'').toLowerCase().replace(/[^a-z]/g,'');
-  const want = norm(label);
-  return state.categories.find(c => {
-    const have = norm(c.label);
-    return have === want || have === want + 's' || want === have + 's';
-  }) || null;
+  const want = norm(form.label);
+  if (!want) return null;
+
+  const cats = state.categories;
+  return cats.find(c => norm(c.label) === want)
+      || cats.find(c => norm(c.label) === want + 's' || want === norm(c.label) + 's')
+      || cats.find(c => norm(c.label).startsWith(want))
+      || cats.find(c => norm(c.label).includes(want))
+      || cats.find(c => want.includes(norm(c.label)) && norm(c.label).length >= 4)
+      || null;
+}
+
+function ctCardPicker(currentId){
+  return `
+    <div style="border-top:1px solid var(--border); margin-top:10px; padding-top:9px;">
+      <label class="hint" style="display:block; margin-bottom:3px;">Steps come from this card</label>
+      <select data-ct-card-link="${ctType}">
+        <option value="">${state.categories.length ? 'Pick a card...' : 'No cards yet'}</option>
+        ${state.categories.map(c => `<option value="${c.id}" ${c.id===currentId?'selected':''}>${escapeHtml(c.label)}</option>`).join('')}
+      </select>
+    </div>`;
 }
 
 function ctStepsColumn(){
   const form = CT_FORMS[ctType];
-  const c = form ? categoryForLabel(form.label) : null;
+  const c = categoryForCT(ctType);
 
   if (c) ensureCategoryDefaults(c);
   const proc = c ? activeProcess(c) : null;
@@ -2226,8 +2257,9 @@ function ctStepsColumn(){
         <label class="section">Process</label>
         <p class="subtle" style="margin:6px 0 0; font-size:12.5px;">
           ${c ? `No steps saved on the ${escapeHtml(c.label)} card yet. Open that card from Home and paste them in — they'll show up here.`
-              : `No card named "${escapeHtml(form ? form.label : '')}" yet. Make one on Home and add its steps, and they'll show up here.`}
+              : `Couldn't tell which card goes with "${escapeHtml(form ? form.label : '')}". Pick it below and it'll stick.`}
         </p>
+        ${ctCardPicker(c ? c.id : '')}
       </div>`;
   }
 
@@ -2243,6 +2275,7 @@ function ctStepsColumn(){
             <button data-proc-tab="${c.id}" data-proc-id="${p.id}" class="proc-tab${p.id===proc.id?' active':''}">${escapeHtml(p.name)}</button>`).join('')}
         </div>` : ''}
       <ol class="steps-read">${proc.steps.map(st => `<li>${escapeHtml(st)}</li>`).join('')}</ol>
+      ${ctCardPicker(c.id)}
     </div>`;
 }
 
@@ -4571,6 +4604,14 @@ function attachHandlers(){
     const p = c.processes.find(x => x.id === el.getAttribute('data-proc-id'));
     return [c, p || null];
   };
+
+  document.querySelectorAll('[data-ct-card-link]').forEach(el => el.onchange = () => {
+    if (!state.ctCardLinks) state.ctCardLinks = {};
+    const key = el.getAttribute('data-ct-card-link');
+    if (el.value) state.ctCardLinks[key] = el.value;
+    else delete state.ctCardLinks[key];
+    saveState(); render();
+  });
 
   document.querySelectorAll('[data-proc-tab]').forEach(el => el.onclick = () => {
     stepsTab[el.getAttribute('data-proc-tab')] = el.getAttribute('data-proc-id');
