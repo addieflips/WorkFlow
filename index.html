@@ -322,7 +322,7 @@
   .waiting-x{ background:none; border:none; cursor:pointer; color:#C13B30; font-size:13px; line-height:1; padding:2px 5px; border-radius:6px; }
   .waiting-x:hover{ background:#FDECEA; }
   .wait-banner{ margin:-2px 0 16px; }
-  .wait-banner-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px,1fr)); gap:6px 18px; margin-top:9px; }
+  .wait-banner-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:6px 18px; margin-top:9px; }
   .wait-banner-col{ min-width:0; }
   .wait-note{ display:flex; align-items:flex-start; gap:7px; padding:3px 0; font-size:13px; }
   .wait-note input[type="checkbox"]{ width:14px; height:14px; margin-top:2px; flex-shrink:0; }
@@ -340,7 +340,7 @@
 const STORAGE_KEY = 'dispatch-state-v2';
 // Bumped every time this file changes. Shown at the bottom of the sidebar so
 // there is never any doubt about which build the browser is actually running.
-const BUILD_ID = '2026-08-19 · 18';
+const BUILD_ID = '2026-08-19 · 19';
 const DEFAULT_STATE = {
   sender: { name: '', email: '' },
   roles: [
