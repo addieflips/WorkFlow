@@ -321,12 +321,12 @@
   .waiting-inline-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px solid var(--border); }
   .waiting-x{ background:none; border:none; cursor:pointer; color:#C13B30; font-size:13px; line-height:1; padding:2px 5px; border-radius:6px; }
   .waiting-x:hover{ background:#FDECEA; }
-  .wait-badges{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin:-4px 0 14px; }
-  .wait-badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:3px 10px; border-radius:999px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--text); }
-  .wait-badge:hover{ border-color:var(--primary); color:var(--primary); }
-  .wait-badge-n{ font-size:11px; font-weight:700; background:var(--primary-soft); color:var(--primary); border-radius:999px; padding:0 6px; }
-  .wait-badge-old{ border-color:#F3C9C4; }
-  .wait-badge-old .wait-badge-n{ background:#FDECEA; color:#C13B30; }
+  .wait-banner{ margin:-2px 0 16px; }
+  .wait-banner-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px,1fr)); gap:6px 18px; margin-top:9px; }
+  .wait-banner-col{ min-width:0; }
+  .wait-note{ display:flex; align-items:flex-start; gap:7px; padding:3px 0; font-size:13px; }
+  .wait-note input[type="checkbox"]{ width:14px; height:14px; margin-top:2px; flex-shrink:0; }
+  .wait-note-text{ flex:1; min-width:0; overflow-wrap:anywhere; }
   .link-btn{ background:none; border:none; padding:0; font-size:11px; font-weight:600; color:var(--primary); cursor:pointer; text-decoration:underline; }
   .dupe-pill{ font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:#FDECEA; color:#C13B30; border:1px solid #F3C9C4; cursor:pointer; }
   .dupe-pill:hover{ background:#C13B30; color:#fff; }
@@ -340,7 +340,7 @@
 const STORAGE_KEY = 'dispatch-state-v2';
 // Bumped every time this file changes. Shown at the bottom of the sidebar so
 // there is never any doubt about which build the browser is actually running.
-const BUILD_ID = '2026-08-19 · 16';
+const BUILD_ID = '2026-08-19 · 17';
 const DEFAULT_STATE = {
   sender: { name: '', email: '' },
   roles: [
@@ -1027,20 +1027,33 @@ function carryForwardCounts(key){
 function waitingBadges(){
   const waiting = state.tasks.filter(t => !t.done && t.waitingOn);
   if (!waiting.length) return '';
-  const counts = {};
-  waiting.forEach(t => { counts[t.waitingOn] = (counts[t.waitingOn]||0) + 1; });
   const today = todayKey();
   const age = t => t.createdDate ? Math.round((toMsDay(today) - toMsDay(t.createdDate)) / 86400000) : null;
-  // Flag a chip when anything under it has been parked 10+ days.
-  const stale = {};
-  waiting.forEach(t => { const d = age(t); if (d !== null && d >= 10) stale[t.waitingOn] = true; });
+  const groups = {};
+  waiting.forEach(t => { (groups[t.waitingOn] = groups[t.waitingOn] || []).push(t); });
+
   return `
-    <div class="wait-badges">
-      <span class="hint" style="font-weight:700;">Waiting on:</span>
-      ${Object.keys(counts).sort().map(who => `
-        <button data-open-waiting class="wait-badge${stale[who] ? ' wait-badge-old' : ''}" title="See the ${counts[who]} task${counts[who]===1?'':'s'} waiting on ${escapeAttr(who)}${stale[who] ? ' — some have waited 10+ days' : ''}">
-          ${escapeHtml(who)} <span class="wait-badge-n">${counts[who]}</span>
-        </button>`).join('')}
+    <div class="card wait-banner">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <label class="section" style="margin:0;">Waiting on \u00b7 ${waiting.length}</label>
+        <button data-open-waiting class="link-btn">Open full page</button>
+      </div>
+      <div class="wait-banner-grid">
+        ${Object.keys(groups).sort().map(who => `
+          <div class="wait-banner-col">
+            <p class="hint" style="margin:0 0 5px; font-weight:700;">${escapeHtml(who)} \u00b7 ${groups[who].length}</p>
+            ${groups[who].map(t => {
+              const d = age(t);
+              const old = d !== null && d >= 10;
+              return `
+              <div class="wait-note">
+                <input type="checkbox" data-task-toggle="${t.id}" title="Mark done" />
+                <span class="wait-note-text">${escapeHtml(t.text)}</span>
+                ${d !== null ? `<span class="wait-age${old ? ' wait-age-old' : ''}">${d}d</span>` : ''}
+              </div>`;
+            }).join('')}
+          </div>`).join('')}
+      </div>
     </div>`;
 }
 
