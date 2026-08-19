@@ -4378,10 +4378,13 @@ function attachHandlers(){
   // Close on mousedown, not click: clicking Done blurs the date field, which
   // fires its change event first. If that handler re-rendered, this button would
   // be destroyed before the click landed and the panel would never close.
-  const closeTaskEditorBtn = document.querySelector('[data-close-task-editor]');
-  if (closeTaskEditorBtn) closeTaskEditorBtn.onmousedown = (e) => {
+  //
+  // querySelectorAll, not querySelector: a task that is both due today and in a
+  // card renders its row — and so this panel — more than once. Wiring only the
+  // first left the other Done buttons dead.
+  document.querySelectorAll('[data-close-task-editor]').forEach(btn => btn.onmousedown = (e) => {
     e.preventDefault();
-    const panel = closeTaskEditorBtn.closest('.task-editor');
+    const panel = btn.closest('.task-editor');
     if (panel) {
       const dueEl = panel.querySelector('[data-task-due]');
       const waitEl = panel.querySelector('[data-task-waiting]');
@@ -4393,7 +4396,7 @@ function attachHandlers(){
     }
     editingTaskId = null;
     saveState(); render();
-  };
+  });
 
   // Persist as you change, but do not re-render while the panel is open.
   document.querySelectorAll('[data-task-due]').forEach(el => el.onchange = () => {
@@ -4469,6 +4472,10 @@ function attachHandlers(){
     if (!t) return;
     t.waitingOn = el.value;
     saveState();
+    // A select commits the moment you pick, so re-rendering here is safe — and
+    // needed, or the pill on the row and any duplicate panel stay stale.
+    render();
+    showToast(t.waitingOn ? 'Waiting on ' + t.waitingOn : 'Not waiting on anyone');
   });
 
   const toggleTaskDetailBtn = document.querySelector('[data-toggle-task-detail]');
