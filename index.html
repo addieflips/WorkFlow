@@ -1323,6 +1323,7 @@ function taskEditorPanel(t){
           <label class="hint" style="display:block; margin-bottom:2px;">Waiting on</label>
           <select data-task-waiting="${t.id}" style="font-size:12.5px; padding:5px 7px;">
             ${waitingChoicesFor(t.waitingOn).map(o => `<option value="${escapeAttr(o)}" ${(t.waitingOn||'')===o?'selected':''}>${o ? escapeHtml(o) : 'Nobody'}</option>`).join('')}
+            <option value="__add__">+ Add someone...</option>
           </select>
         </div>
       </div>
@@ -4999,6 +5000,21 @@ function attachHandlers(){
   document.querySelectorAll('[data-task-waiting]').forEach(el => el.onchange = () => {
     const t = state.tasks.find(x => x.id === el.getAttribute('data-task-waiting'));
     if (!t) return;
+
+    // "+ Add someone..." isn't a value — it adds to the shared list and then
+    // selects the new name, so a person can be added without leaving the task.
+    if (el.value === '__add__') {
+      const name = (prompt('Who are you waiting on?') || '').trim();
+      if (!name) { el.value = t.waitingOn || ''; return; }
+      const opts = waitingOptions();
+      const existing = opts.find(o => o.toLowerCase() === name.toLowerCase());
+      if (!existing) opts.push(name);
+      t.waitingOn = existing || name;
+      saveState(); render();
+      showToast('Waiting on ' + t.waitingOn);
+      return;
+    }
+
     t.waitingOn = el.value;
     saveState();
     // A select commits the moment you pick, so re-rendering here is safe — and
