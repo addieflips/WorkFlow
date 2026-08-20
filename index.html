@@ -318,9 +318,14 @@
   .tone-amber .tone-flag{ background:#A8730F; color:#fff; }
   .tone-green .tone-flag{ background:#2F7A4F; color:#fff; }
   .waiting-inline{ border-top:1px solid var(--border); margin:8px 0 8px; padding-top:8px; }
-  .waiting-inline-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-bottom:1px solid var(--border); }
-  .waiting-x{ background:none; border:none; cursor:pointer; color:#C13B30; font-size:13px; line-height:1; padding:2px 5px; border-radius:6px; }
-  .waiting-x:hover{ background:#FDECEA; }
+  .waiting-inline-row{ display:flex; align-items:center; gap:5px; font-size:12.5px; padding:2px 0; }
+  .waiting-inline-row input{ flex:1; min-width:0; font-size:12.5px; padding:4px 7px; }
+  .waiting-use{ font-size:10.5px; color:var(--muted); min-width:32px; text-align:right; flex-shrink:0; }
+  .waiting-mini{ background:none; border:1px solid var(--border); border-radius:6px; cursor:pointer; color:var(--muted); width:22px; height:22px; padding:0; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .waiting-mini:hover:not(:disabled){ background:var(--bg); color:var(--ink); }
+  .waiting-mini:disabled{ opacity:.35; cursor:default; }
+  .waiting-x{ background:none; border:1px solid var(--border); cursor:pointer; color:#C13B30; font-size:12px; line-height:1; width:22px; height:22px; padding:0; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .waiting-x:hover{ background:#FDECEA; border-color:#F3C9C3; }
   .wait-banner{ margin:-2px 0 16px; }
   .wait-banner-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:6px 18px; margin-top:9px; }
   .wait-banner-col{ min-width:0; }
@@ -402,10 +407,12 @@ let patternGroups = null; // [{ name, taskIds, samples }]
 let taskSearchQuery = '';
 let showTaskDetail = false;
 let editingGoal = false;
+let countSaveTimer = null;
 let calMonthOffset = 0;
 let selectedCalDay = null;
 let editingTaskId = null;
 let taskWaitingManageOpen = false;   // inline waiting-on list editor, shown on the task
+let homeWaitingManageOpen = false;   // same editor, opened from the Home waiting banner
 let showMoreNav = false;
 
 // Starting list only — the real one lives in state.waitingOptions so it can be
@@ -1036,8 +1043,9 @@ function waitingBadges(){
     <div class="card wait-banner">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <label class="section" style="margin:0;">Waiting on \u00b7 ${waiting.length}</label>
-        <button data-open-waiting class="link-btn">Open full page</button>
+        <button data-manage-waiting-home class="link-btn" title="Add, rename, reorder or delete the options in this list">${homeWaitingManageOpen ? 'Done' : 'Edit list'}</button>
       </div>
+      ${homeWaitingManageOpen ? waitingInlineManager('home') : ''}
       <div class="wait-banner-grid">
         ${Object.keys(groups).sort().map(who => `
           <div class="wait-banner-col">
@@ -1397,7 +1405,7 @@ function taskEditorPanel(t){
         <div>
           <label class="hint" style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:2px;">
             <span>Waiting on</span>
-            <button data-manage-waiting class="link-btn" title="Add, rename or delete the options in this list">Edit list</button>
+            <button data-manage-waiting class="link-btn" title="Add, rename, reorder or delete the options in this list">${taskWaitingManageOpen ? 'Done' : 'Edit list'}</button>
           </label>
           <select data-task-waiting="${t.id}" style="font-size:12.5px; padding:5px 7px;">
             ${waitingChoicesFor(t.waitingOn).map(o => `<option value="${escapeAttr(o)}" ${(t.waitingOn||'')===o?'selected':''}>${o ? escapeHtml(o) : 'Nobody'}</option>`).join('')}
@@ -1405,27 +1413,35 @@ function taskEditorPanel(t){
           </select>
         </div>
       </div>
-      ${taskWaitingManageOpen ? waitingInlineManager() : ''}
+      ${taskWaitingManageOpen ? waitingInlineManager('task') : ''}
       <button data-close-task-editor class="btn btn-ghost" style="padding:4px 10px; font-size:12px;">Done</button>
     </div>
   `;
 }
 
-// The full editor lives on a Tools tab that isn't in the sidebar unless pinned,
-// which made it effectively unfindable. This is the same list, inline on the
-// task, where it is actually needed.
-function waitingInlineManager(){
+// This is the only editor for the waiting-on list. It used to live on a Tools
+// tab that wasn't in the sidebar unless pinned, which made it unfindable; the
+// list is now edited where it is actually used, next to the dropdown.
+// `scope` only keeps the field ids unique when both copies are on screen at once.
+function waitingInlineManager(scope){
   const opts = waitingOptions();
+  const newId = 'waiting-new-' + (scope || 'task');
   return `
     <div class="waiting-inline">
-      <p class="hint" style="margin:0 0 6px;">Remove with \u2715, or type a new one below.</p>
-      ${opts.length ? opts.map((o, i) => `
+      <p class="hint" style="margin:0 0 6px;">Type to rename \u00b7 arrows reorder the dropdown \u00b7 \u2715 removes.</p>
+      ${opts.length ? opts.map((o, i) => {
+        const used = waitingUsageCount(o);
+        return `
         <div class="waiting-inline-row">
-          <span>${escapeHtml(o)}</span>
+          <input data-waiting-rename="${i}" value="${escapeAttr(o)}" aria-label="Rename ${escapeAttr(o)}" />
+          <span class="waiting-use">${used ? used + ' open' : ''}</span>
+          <button data-waiting-move="${i}" data-dir="-1" class="waiting-mini" title="Move up" ${i===0?'disabled':''}>${icon('chevronUp',11)}</button>
+          <button data-waiting-move="${i}" data-dir="1" class="waiting-mini" title="Move down" ${i===opts.length-1?'disabled':''}>${icon('chevronDown',11)}</button>
           <button data-waiting-delete="${i}" class="waiting-x" title="Remove ${escapeAttr(o)}">\u2715</button>
-        </div>`).join('') : `<p class="hint" style="margin:0 0 6px;">List is empty.</p>`}
-      <div style="display:flex; gap:6px; margin-top:6px;">
-        <input id="waiting-new" placeholder="Add a name..." style="flex:1; font-size:12.5px; padding:5px 7px;" />
+        </div>`;
+      }).join('') : `<p class="hint" style="margin:0 0 6px;">List is empty.</p>`}
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <input id="${newId}" class="waiting-new" placeholder="Add a name..." style="flex:1; font-size:12.5px; padding:5px 7px;" />
         <button data-waiting-add class="btn btn-primary" style="padding:5px 10px; font-size:12px;">Add</button>
       </div>
       ${opts.length ? `<button data-waiting-clear class="link-btn" style="margin-top:8px; color:#C13B30;">Remove all ${opts.length}</button>` : ''}
@@ -2480,93 +2496,6 @@ function viewCT(){
   `;
 }
 
-// ---------------- Waiting on ----------------
-let waitingEditOpen = true;
-
-function waitingListEditor(){
-  const opts = waitingOptions();
-  return `
-    <div class="card" style="margin-bottom:16px; max-width:640px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <label class="section" style="margin:0;">Who you can wait on</label>
-        <button data-waiting-edit-toggle class="btn btn-ghost" style="padding:4px 10px; font-size:12px;">${waitingEditOpen ? 'Done' : 'Edit list'}</button>
-      </div>
-      ${!waitingEditOpen ? `
-        <p class="hint" style="margin:6px 0 0;">${opts.map(o => escapeHtml(o)).join(' \u00b7 ') || 'No options yet.'}</p>
-      ` : `
-        <p class="hint" style="margin:6px 0 10px;">Rename in place, then press Enter or click away. Order here is the order in the dropdown.</p>
-        ${opts.map((o, i) => {
-          const used = waitingUsageCount(o);
-          return `
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-            <input data-waiting-rename="${i}" value="${escapeAttr(o)}" style="flex:1; font-size:13px; padding:6px 9px;" />
-            <span class="subtle" style="font-size:11.5px; min-width:52px; text-align:right;">${used ? used + ' in use' : ''}</span>
-            <button data-waiting-move="${i}" data-dir="-1" class="icon-btn" title="Move up" style="width:26px;height:26px;" ${i===0?'disabled':''}>${icon('chevronUp',12)}</button>
-            <button data-waiting-move="${i}" data-dir="1" class="icon-btn" title="Move down" style="width:26px;height:26px;" ${i===opts.length-1?'disabled':''}>${icon('chevronDown',12)}</button>
-            <button data-waiting-delete="${i}" class="icon-btn danger" title="Delete" style="width:26px;height:26px;">${icon('trash',12)}</button>
-          </div>`;
-        }).join('')}
-        <div style="display:flex; gap:8px; margin-top:10px;">
-          <input id="waiting-new" placeholder="Add someone or a group..." style="flex:1; font-size:13px;" />
-          <button data-waiting-add class="btn btn-primary" style="padding:8px 14px;">Add</button>
-        </div>
-        ${opts.length ? `<button data-waiting-clear class="btn btn-ghost" style="margin-top:10px; padding:6px 12px; font-size:12px; color:#C13B30;">Remove all ${opts.length} and start fresh</button>` : `<p class="hint" style="margin:10px 0 0;">List is empty. Add your own above, or use "+ Add someone..." on any task.</p>`}
-      `}
-    </div>`;
-}
-
-function viewWaiting(){
-  const waiting = state.tasks.filter(t => !t.done && t.waitingOn);
-  if (!waiting.length) {
-    return `${waitingListEditor()}
-    <div class="card" style="margin-bottom:16px; max-width:640px;">
-      <label class="section">Waiting on</label>
-      <p class="subtle" style="margin:10px 0 0; font-size:13px;">Nothing is parked waiting on anyone.</p>
-      <p class="hint" style="margin-top:6px;">Set "waiting on" from the calendar icon on any task.</p>
-    </div>`;
-  }
-
-  const groups = {};
-  waiting.forEach(t => { (groups[t.waitingOn] = groups[t.waitingOn] || []).push(t); });
-  const today = todayKey();
-
-  const age = t => {
-    const from = t.dueDate || t.createdDate;
-    if (!from) return null;
-    return Math.round((dateFromKey(today) - dateFromKey(from)) / 86400000);
-  };
-
-  return `
-    ${waitingListEditor()}
-    <div class="card" style="margin-bottom:16px; max-width:640px;">
-      <label class="section">Waiting on · ${waiting.length}</label>
-      <div style="margin-top:10px;">
-        ${Object.keys(groups).sort().map(who => {
-          const list = groups[who].slice().sort((a,b) => (age(b)||0) - (age(a)||0));
-          return `
-          <div style="margin-bottom:12px;">
-            <p class="hint" style="margin:0 0 5px; font-weight:700;">${escapeHtml(who)} · ${list.length}</p>
-            ${list.map(t => {
-              const d = age(t);
-              const stale = d !== null && d >= 10;
-              return `
-              <div class="src-row">
-                <input type="checkbox" data-task-toggle="${t.id}" style="width:14px;height:14px;flex-shrink:0;" />
-                <div style="flex:1;">
-                  <div style="font-size:13.5px;">${escapeHtml(t.text)}</div>
-                  <div class="search-meta">${taskCategoryIds(t).map(id => escapeHtml((state.categories.find(c=>c.id===id)||{}).label||'')).filter(Boolean).join(', ') || 'General'}${t.dueDate ? ' · due ' + escapeHtml(t.dueDate) : ''}</div>
-                </div>
-                ${d !== null ? `<span class="wait-age${stale?' wait-age-old':''}">${d}d</span>` : ''}
-              </div>`;
-            }).join('')}
-          </div>`;
-        }).join('')}
-      </div>
-      <p class="hint">Anything sitting 10 days or more is flagged. Tick it off here when it comes back.</p>
-    </div>
-  `;
-}
-
 // ---------------- Denial builder ----------------
 let denialPicks = [];
 let denialLoading = false;
@@ -2663,7 +2592,7 @@ function viewDenialBuilder(){
 }
 
 // ---------------- Tools: deadlines and committee cutoff ----------------
-let toolsTab = 'waiting';
+let toolsTab = 'ct';
 let toolDate = '';
 let toolRuleId = '';
 let addingRule = false;
@@ -2863,7 +2792,6 @@ function viewCommittee(){
 }
 
 const TOOL_TABS = [
-  { k:'waiting',   label:'Waiting on',  ic:'clock'    },
   { k:'ct',        label:'Contact tracking', ic:'copy' },
   { k:'denial',    label:'Denials',     ic:'mail'     },
   { k:'deadline',  label:'Deadlines',   ic:'calendar' },
@@ -2871,13 +2799,11 @@ const TOOL_TABS = [
 ];
 
 function viewTools(){
-  const waitingCount = state.tasks.filter(t => !t.done && t.waitingOn).length;
   const body =
-    toolsTab === 'ct'        ? viewCT() :
     toolsTab === 'denial'    ? viewDenialBuilder() :
     toolsTab === 'deadline'  ? viewDeadline() :
     toolsTab === 'committee' ? viewCommittee() :
-                               viewWaiting();
+                               viewCT();
 
   return `
     <div class="page-header"><div class="page-title">Tools</div></div>
@@ -2885,7 +2811,6 @@ function viewTools(){
       ${TOOL_TABS.map(t => `
         <button data-tool-tab="${t.k}" class="tool-tab${toolsTab===t.k?' active':''}">
           ${icon(t.ic,14)}<span>${t.label}</span>
-          ${t.k==='waiting' && waitingCount ? `<span class="count">${waitingCount}</span>` : ''}
         </button>`).join('')}
     </div>
     ${body}
@@ -4914,16 +4839,37 @@ function attachHandlers(){
     saveState(); render();
   });
 
-  document.querySelectorAll('[data-count-field]').forEach(el => el.onchange = () => {
+  // These used to save on `change` only, which fires on blur. A number typed in
+  // and left sitting there — because you tabbed away, or a background Outlook
+  // fetch re-rendered the page — was never written to state, so the day closed
+  // out with the old number and the difference carried into the next morning.
+  // Commit on every keystroke instead; `change` still handles the re-render.
+  const commitCount = (el) => {
     const attr = el.getAttribute('data-count-field');
     const field = attr.endsWith('_assigned') ? 'assigned' : 'completed';
     const catId = attr.replace(/_(assigned|completed)$/, '');
     const key = todayKey();
     if (!state.dailyCounts[key]) state.dailyCounts[key] = {};
     if (!state.dailyCounts[key][catId]) state.dailyCounts[key][catId] = { assigned:0, completed:0 };
+    const rec = state.dailyCounts[key][catId];
     const val = Math.max(0, parseInt(el.value,10) || 0);
-    state.dailyCounts[key][catId][field] = val;
-    saveState(); render();
+    rec[field] = val;
+    // "3 carried over" must never claim more than is actually assigned today,
+    // or correcting the assigned figure by hand leaves a nonsense note behind.
+    if (rec.carried) rec.carried = Math.min(rec.carried, rec.assigned) || undefined;
+  };
+
+  document.querySelectorAll('[data-count-field]').forEach(el => {
+    el.oninput = () => {
+      commitCount(el);
+      clearTimeout(countSaveTimer);
+      countSaveTimer = setTimeout(saveState, 400);   // no render — that would eat the caret
+    };
+    el.onchange = () => {
+      clearTimeout(countSaveTimer);
+      commitCount(el);
+      saveState(); render();
+    };
   });
 
   // Saves silently: re-rendering here would destroy the adjacent delete button
@@ -4994,6 +4940,7 @@ function attachHandlers(){
     e.preventDefault(); e.stopPropagation();
     const id = el.getAttribute('data-open-task-editor');
     editingTaskId = (editingTaskId === id) ? null : id;
+    taskWaitingManageOpen = false;
     render();
   });
 
@@ -5016,6 +4963,7 @@ function attachHandlers(){
       }
     }
     editingTaskId = null;
+    taskWaitingManageOpen = false;
     saveState(); render();
   });
 
@@ -5027,40 +4975,41 @@ function attachHandlers(){
     saveState();
   });
 
-  // Jump straight to the list editor with it already open — it lives on a Tools
-  // tab that isn't in the sidebar unless pinned, which made it hard to find.
-  document.querySelectorAll('[data-open-waiting]').forEach(el => el.onclick = () => {
-    view = 'tools'; toolsTab = 'waiting'; render();
-  });
-
   document.querySelectorAll('[data-manage-waiting]').forEach(el => el.onclick = (e) => {
     e.preventDefault(); e.stopPropagation();
     taskWaitingManageOpen = !taskWaitingManageOpen;
+    if (taskWaitingManageOpen) homeWaitingManageOpen = false;
     render();
   });
 
-  document.querySelectorAll('[data-waiting-edit-toggle]').forEach(el => el.onclick = () => {
-    waitingEditOpen = !waitingEditOpen; render();
+  document.querySelectorAll('[data-manage-waiting-home]').forEach(el => el.onclick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    homeWaitingManageOpen = !homeWaitingManageOpen;
+    if (homeWaitingManageOpen) taskWaitingManageOpen = false;
+    render();
   });
 
+  // Read the box inside the same editor, not by id: the task panel renders twice
+  // for a task that is both due today and on a card, so ids are not unique.
   document.querySelectorAll('[data-waiting-add]').forEach(el => el.onclick = () => {
-    const input = document.getElementById('waiting-new');
+    const box = el.closest('.waiting-inline');
+    const input = box ? box.querySelector('.waiting-new') : null;
     const val = (input ? input.value : '').trim();
     if (!val) return;
     const opts = waitingOptions();
     if (opts.some(o => o.toLowerCase() === val.toLowerCase())) { showToast('Already on the list'); return; }
     opts.push(val);
     saveState(); render();
+    showToast('Added \u00b7 ' + val);
   });
 
-  const waitingNewEl = document.getElementById('waiting-new');
-  if (waitingNewEl) waitingNewEl.onkeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const b = document.querySelector('[data-waiting-add]');
-      if (b) b.click();
-    }
-  };
+  document.querySelectorAll('.waiting-new').forEach(input => input.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const box = input.closest('.waiting-inline');
+    const b = box ? box.querySelector('[data-waiting-add]') : null;
+    if (b) b.click();
+  });
 
   document.querySelectorAll('[data-waiting-rename]').forEach(el => el.onchange = () => {
     const i = parseInt(el.getAttribute('data-waiting-rename'), 10);
@@ -5094,7 +5043,7 @@ function attachHandlers(){
     const opts = waitingOptions();
     const inUse = state.tasks.filter(t => !t.done && t.waitingOn).length;
     const msg = 'Remove all ' + opts.length + ' options from the dropdown?\n\n'
-      + (inUse ? inUse + ' open task' + (inUse===1?'':'s') + ' currently waiting on someone will keep their label and stay on this page.\n\n' : '')
+      + (inUse ? inUse + ' open task' + (inUse===1?'':'s') + ' currently waiting on someone will keep their label and stay in the Waiting on list on Home.\n\n' : '')
       + 'You can then add your own.';
     if (!confirm(msg)) return;
     state.waitingOptions = [];
@@ -5108,7 +5057,7 @@ function attachHandlers(){
     const name = opts[i];
     const used = waitingUsageCount(name);
     const msg = used
-      ? used + ' task' + (used===1?' is':'s are') + ' waiting on "' + name + '".\n\nRemove it from the dropdown? Those tasks keep the label and stay on this page \u2014 you just won\'t be able to pick it for new ones.'
+      ? used + ' task' + (used===1?' is':'s are') + ' waiting on "' + name + '".\n\nRemove it from the dropdown? Those tasks keep the label and stay in the Waiting on list on Home \u2014 you just won\'t be able to pick it for new ones.'
       : 'Remove "' + name + '" from the list?';
     if (!confirm(msg)) return;
     opts.splice(i, 1);
