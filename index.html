@@ -1903,18 +1903,34 @@ function viewDashboard(){
 
   // Totals per category across the week
   const rows = state.categories.map(c => {
-    let assigned = 0, completed = 0;
+    // A case rolled over from yesterday is the SAME case, not a second one, so
+    // only the newly assigned share of each day counts toward the week. Without
+    // this, five cases assigned Monday and untouched all week would read as
+    // twenty-five assigned by Friday and the "remaining" figure would balloon.
+    // "Left" is a live figure, not a weekly sum. Subtracting the week's done
+    // from the week's assigned goes wrong whenever work carried in from the
+    // previous week — that work was assigned last week but finished this one.
+    // The most recent day that has a saved record already holds the true
+    // outstanding count, because rollovers keep it current. Existence is the
+    // test, not a non-zero value: clearing a rollover to 0 is a deliberate
+    // "none left" and must not fall back to an older, higher day.
+    let assigned = 0, completed = 0, last = null;
     const perDay = dayKeys.map(k => {
-      const rec = (state.dailyCounts[k] && state.dailyCounts[k][c.id]) || { assigned:0, completed:0 };
-      assigned += rec.assigned; completed += rec.completed;
+      const stored = state.dailyCounts[k] && state.dailyCounts[k][c.id];
+      const rec = stored || { assigned:0, completed:0 };
+      assigned += Math.max(0, rec.assigned - (rec.carried || 0));
+      completed += rec.completed;
+      if (stored) last = stored;
       return rec;
     });
-    return { cat: c, assigned, completed, remaining: Math.max(0, assigned - completed), perDay };
+    const remaining = last ? Math.max(0, last.assigned - last.completed) : 0;
+
+    return { cat: c, assigned, completed, remaining, perDay };
   });
 
   const grandAssigned = rows.reduce((s,r)=>s+r.assigned, 0);
   const grandCompleted = rows.reduce((s,r)=>s+r.completed, 0);
-  const grandRemaining = Math.max(0, grandAssigned - grandCompleted);
+  const grandRemaining = rows.reduce((s,r)=>s+r.remaining, 0);
 
   const tasksDone = state.tasks.filter(t => t.done && dayKeys.includes(t.completedDate)).length;
 
@@ -1934,7 +1950,7 @@ function viewDashboard(){
 
     <div class="grid" style="margin-bottom:16px;">
       <div class="card"><div class="stat-big"><span class="num">${grandCompleted}</span><span class="lbl">completed</span></div><p class="hint" style="margin:4px 0 0;">across all categories</p></div>
-      <div class="card"><div class="stat-big"><span class="num">${grandRemaining}</span><span class="lbl">remaining</span></div><p class="hint" style="margin:4px 0 0;">${grandAssigned} assigned this week</p></div>
+      <div class="card"><div class="stat-big"><span class="num">${grandRemaining}</span><span class="lbl">remaining</span></div><p class="hint" style="margin:4px 0 0;" title="Rollovers are counted once, on the day they were first assigned.">${grandAssigned} newly assigned this week</p></div>
       <div class="card"><div class="stat-big"><span class="num">${tasksDone}</span><span class="lbl">tasks done</span></div><p class="hint" style="margin:4px 0 0;">checked off this week</p></div>
     </div>
 
