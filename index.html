@@ -1381,8 +1381,7 @@ function goalPanel(){
 function dueTodayPanel(){
   const overdue = state.tasks.filter(isOverdue);
   const today = state.tasks.filter(isDueToday);
-  const waiting = state.tasks.filter(t => !t.done && t.waitingOn && !isOverdue(t) && !isDueToday(t));
-  const nothing = !overdue.length && !today.length && !waiting.length;
+  const nothing = !overdue.length && !today.length;
 
   const block = (title, list, cls) => list.length ? `
     <div style="margin-bottom:10px;">
@@ -1397,8 +1396,7 @@ function dueTodayPanel(){
         ${nothing
           ? `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing overdue or due today. Anything with a due date shows up here.</p>`
           : `${block('Overdue', overdue, 'color:#D0453A;')}
-             ${block('Due today', today, '')}
-             ${block('Waiting on someone', waiting, 'color:var(--muted);')}`}
+             ${block('Due today', today, '')}`}
       </div>
     </div>
   `;
