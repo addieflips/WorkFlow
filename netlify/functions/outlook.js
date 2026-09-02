@@ -115,6 +115,34 @@ const WEEKDAYS = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 
 // ---------- recurrence ----------
 
+// "2TU" -> { n:2, code:'TU' } (2nd Tuesday). "-1FR" -> { n:-1, code:'FR' } (last Friday).
+// Plain "TU" (no ordinal, used by WEEKLY) parses to n:0 and is intentionally
+// rejected by callers that need an ordinal.
+function parseByDayEntry(s) {
+  const m = String(s || '').trim().match(/^([+-]?\d+)?(SU|MO|TU|WE|TH|FR|SA)$/);
+  if (!m) return null;
+  return { n: m[1] ? parseInt(m[1], 10) : 0, code: m[2] };
+}
+
+// Day-of-month for the nth occurrence of a weekday in a given month.
+// n > 0 counts from the start (2 = second Tuesday), n < 0 counts from the
+// end (-1 = last Friday). Returns null if that occurrence doesn't exist
+// (e.g. a 5th Friday in a month that only has four).
+function nthWeekdayOfMonth(y, mo, weekdayIdx, n) {
+  const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  if (n > 0) {
+    const firstDow = new Date(Date.UTC(y, mo - 1, 1)).getUTCDay();
+    const day = 1 + ((weekdayIdx - firstDow + 7) % 7) + (n - 1) * 7;
+    return day <= lastDay ? day : null;
+  }
+  if (n < 0) {
+    const lastDow = new Date(Date.UTC(y, mo - 1, lastDay)).getUTCDay();
+    const day = lastDay - ((lastDow - weekdayIdx + 7) % 7) + (n + 1) * 7;
+    return day >= 1 ? day : null;
+  }
+  return null;
+}
+
 function parseRRule(value) {
   const out = {};
   String(value || '').split(';').forEach((part) => {
@@ -169,6 +197,37 @@ function expandRecurrence(start, rrule, winStartMs, winEndMs) {
       if (results.length > MAX_OCCURRENCES) break;
     }
     return results;
+  }
+
+  // "Monthly on the 2nd Tuesday" (or yearly equivalents) carry an ordinal in
+  // BYDAY — e.g. RRULE:FREQ=MONTHLY;BYDAY=2TU — rather than a fixed
+  // day-of-month. Without this branch those recur on whatever numeric day
+  // the very first occurrence happened to land on, which drifts off the
+  // real "2nd Tuesday" date after a month or two.
+  if ((freq === 'MONTHLY' || freq === 'YEARLY') && rrule.BYDAY) {
+    const byDayEntries = String(rrule.BYDAY)
+      .split(',')
+      .map(parseByDayEntry)
+      .filter((e) => e && e.n !== 0 && WEEKDAYS.includes(e.code));
+    if (byDayEntries.length) {
+      const monthStep = freq === 'YEARLY' ? 12 * interval : interval;
+      let months = 0;
+      let guard2 = 0;
+      while (guard2++ < 2000) {
+        const anchor = addMonths(start, months);
+        if (toMs({ ...start, y: anchor.y, mo: anchor.mo, d: 1 }) > winEndMs) break;
+        const days = byDayEntries
+          .map((e) => nthWeekdayOfMonth(anchor.y, anchor.mo, WEEKDAYS.indexOf(e.code), e.n))
+          .filter((d) => d != null)
+          .sort((a, b) => a - b);
+        for (const d of days) {
+          if (!emit({ ...start, y: anchor.y, mo: anchor.mo, d })) return results;
+        }
+        if (results.length > MAX_OCCURRENCES) break;
+        months += monthStep;
+      }
+      return results;
+    }
   }
 
   let cur = start;
