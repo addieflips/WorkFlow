@@ -2082,9 +2082,30 @@ function tasksTable(dayKeys, todayK){
 let askQuestion = '';
 let askLoading = false;
 let askError = '';
-let askResult = null;      // { answerFound, answer, explanation, sourceIds, confidence, suggestedQuestion }
+let askResult = null;      // { answerFound, answer, explanation, sourceIds, confidence, suggestedQuestion, forMemberEmail }
 let leadAnswerText = '';
 let savingLeadAnswer = false;
+let askForEmail = false;   // "draft this as a message to send to a member" toggle
+
+// Renders answer blocks ({type:'paragraph',text} | {type:'bullets',items:[]}) as real HTML —
+// never raw markdown text, since escapeHtml would print ** and - literally.
+function renderAnswerBlocks(blocks){
+  return (blocks||[]).map(b => {
+    if (b.type === 'bullets') {
+      return `<ul style="margin:0 0 10px; padding-left:20px;">${(b.items||[]).map(i => `<li style="margin-bottom:4px;">${escapeHtml(i)}</li>`).join('')}</ul>`;
+    }
+    return `<p style="margin:0 0 10px;">${escapeHtml(b.text||'')}</p>`;
+  }).join('');
+}
+
+// Plain-text version for copy-to-clipboard, so it pastes cleanly into an email client
+// (real bullet characters and blank lines instead of markdown syntax).
+function blocksToPlainText(blocks){
+  return (blocks||[]).map(b => {
+    if (b.type === 'bullets') return (b.items||[]).map(i => '\u2022 ' + i).join('\n');
+    return b.text||'';
+  }).join('\n\n');
+}
 
 function viewAssistant(){
   const hasKb = state.kb.length > 0;
@@ -2102,6 +2123,10 @@ function viewAssistant(){
         <label class="section">Ask a question</label>
         <p class="hint" style="margin:3px 0 8px;">Answered only from your ${state.kb.length} saved article${state.kb.length===1?'':'s'} — never from anything else. The most relevant ones are consulted for each question.</p>
         <textarea id="ask-input" rows="3" placeholder="Can this account transfer be approved if the member has already had an enroller change?">${escapeHtml(askQuestion)}</textarea>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:9px; font-size:13px; color:var(--muted); cursor:pointer;">
+          <input type="checkbox" id="ask-for-email" ${askForEmail?'checked':''} />
+          Draft this as a message to send to a member
+        </label>
         <div style="display:flex; gap:8px; margin-top:8px;">
           <button data-run-ask class="btn btn-primary" style="padding:9px 18px;" ${askLoading?'disabled':''}>${askLoading ? 'Checking…' : 'Ask'}</button>
           ${askResult ? `<button data-clear-ask class="btn btn-ghost" style="padding:9px 16px;">Clear</button>` : ''}
@@ -2151,7 +2176,8 @@ function askResultPanel(){
         <label class="section" style="margin:0;">Answer</label>
         ${confidencePill(r.confidence)}
       </div>
-      <p style="font-size:15px; line-height:1.6; margin:0 0 12px; font-weight:500;">${escapeHtml(r.answer)}</p>
+      <div style="font-size:15px; line-height:1.6;">${renderAnswerBlocks(r.answer)}</div>
+      <button data-copy-answer class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin:0 0 12px;">${icon('copy',13)} ${r.forMemberEmail ? 'Copy for email' : 'Copy'}</button>
       ${r.explanation ? `<p style="font-size:13.5px; line-height:1.6; color:var(--muted); margin:0 0 12px;">${escapeHtml(r.explanation)}</p>` : ''}
 
       <div style="border-top:1px solid var(--border); padding-top:11px;">
@@ -2262,8 +2288,21 @@ Rules:
 - Set confidence: "high" if the articles directly and completely answer it; "medium" if they answer it but leave some ambiguity; "low" if you are stretching.
 - If articles conflict, say so in the explanation rather than picking one silently.
 
+FORMAT for "answer":
+- "answer" is an array of content blocks — never a single string.
+- Each block is either {"type":"paragraph","text":"..."} or {"type":"bullets","items":["...","..."]}.
+- Default to short paragraphs. Only use a "bullets" block if the question explicitly asks for bullet points, a list, or steps.
+- Never use markdown syntax anywhere in the text — no **, no leading -, no #, no numbered "1.". The app renders these blocks directly as real paragraphs and bullets, so markdown characters would show up as literal punctuation.
+${askForEmail ? `
+This answer will be copied and pasted directly into an email sent to a doTERRA member. Write "answer" as member-facing copy:
+- Plain, warm, professional tone for a customer — not internal shorthand or jargon.
+- Leave out internal-only process detail (Compliance escalation paths, internal form routing, internal caveats) unless the member's question is directly about that.
+- Do not invent a greeting ("Hi [Name]") or a sign-off — just the informative body content, since it gets dropped into an email Addie already has open.
+- Still ground everything in the reference articles; don't state anything the articles don't support.
+` : ''}
+
 Return ONLY valid JSON, no markdown fences, in exactly this shape:
-{"answerFound": true, "answer": "short direct answer", "explanation": "why, referencing what the articles say", "sourceIds": ["kb_abc"], "confidence": "high", "suggestedQuestion": ""}
+{"answerFound": true, "answer": [{"type":"paragraph","text":"..."}], "explanation": "why, referencing what the articles say", "sourceIds": ["kb_abc"], "confidence": "high", "suggestedQuestion": ""}
 
 QUESTION:
 ${q}
@@ -2287,13 +2326,30 @@ ${articles}`;
 
     // Only keep citations that point at articles that actually exist.
     const validIds = (parsed.sourceIds || []).filter(id => state.kb.some(a => a.id === id));
+
+    // Normalize "answer" into a clean block list, tolerant of the model slipping
+    // back to a plain string, and dropping anything malformed.
+    let blocks = [];
+    if (Array.isArray(parsed.answer)) {
+      blocks = parsed.answer
+        .filter(b => b && (b.type === 'paragraph' || b.type === 'bullets'))
+        .map(b => b.type === 'bullets'
+          ? { type: 'bullets', items: (Array.isArray(b.items) ? b.items : []).filter(x => typeof x === 'string' && x.trim()).slice(0, 20) }
+          : { type: 'paragraph', text: typeof b.text === 'string' ? b.text : '' })
+        .filter(b => b.type === 'bullets' ? b.items.length : b.text.trim())
+        .slice(0, 12);
+    } else if (typeof parsed.answer === 'string' && parsed.answer.trim()) {
+      blocks = [{ type: 'paragraph', text: parsed.answer }];
+    }
+
     askResult = {
-      answerFound: !!parsed.answerFound && !!(parsed.answer||'').trim(),
-      answer: parsed.answer || '',
+      answerFound: !!parsed.answerFound && blocks.length > 0,
+      answer: blocks,
       explanation: parsed.explanation || '',
       sourceIds: validIds,
       confidence: parsed.confidence || 'low',
       suggestedQuestion: parsed.suggestedQuestion || '',
+      forMemberEmail: askForEmail,
     };
     askLoading = false; render();
   } catch(e){
@@ -4448,9 +4504,17 @@ function attachHandlers(){
   const runAskBtn = document.querySelector('[data-run-ask]');
   if (runAskBtn) runAskBtn.onclick = () => { if (!askLoading) runAsk(); };
 
+  const askForEmailEl = document.getElementById('ask-for-email');
+  if (askForEmailEl) askForEmailEl.onchange = () => { askForEmail = askForEmailEl.checked; };
+
   const clearAskBtn = document.querySelector('[data-clear-ask]');
   if (clearAskBtn) clearAskBtn.onclick = () => {
     askResult = null; askError = ''; askQuestion = ''; leadAnswerText = ''; render();
+  };
+
+  const copyAnswerBtn = document.querySelector('[data-copy-answer]');
+  if (copyAnswerBtn) copyAnswerBtn.onclick = () => {
+    navigator.clipboard.writeText(blocksToPlainText(askResult?.answer)).then(()=>showToast(askResult?.forMemberEmail ? 'Copied — ready to paste into your email' : 'Answer copied'));
   };
 
   const copyLeadQBtn = document.querySelector('[data-copy-lead-question]');
