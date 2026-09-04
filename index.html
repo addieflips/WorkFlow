@@ -3100,6 +3100,13 @@ let editingArticleId = null;   // null = closed, 'new' = adding, id = editing
 let articleDraft = null;
 let expandedArticleId = null;
 
+// Quick-add: paste-only entry for new articles. Manual mode falls back to the
+// classic full form when she wants to fill fields in herself.
+let kbQuickText = '';
+let kbQuickLoading = false;
+let kbManualMode = false;
+let kbManualSaving = false;
+
 function blankArticle(){
   return {
     id: null, title: '', summary: '', content: '',
@@ -3119,6 +3126,137 @@ function articleMatches(a, q, cat){
   if (!q) return true;
   const hay = [a.title, a.summary, a.content, a.category, a.sourceDetail, ...(a.tags||[])].join(' ').toLowerCase();
   return hay.includes(q);
+}
+
+// Reuses the same keyword-overlap scoring the Ask feature uses, so pasted
+// content gets compared against whichever saved articles are actually on topic.
+function relatedArticlesForContent(text){
+  return articlesForQuestion(text);
+}
+
+function formatArticlesForPrompt(list){
+  return list.map(a => [
+    "[" + a.id + "] TITLE: " + a.title,
+    "CATEGORY: " + a.category,
+    "UPDATED: " + (a.updatedDate || "unknown"),
+    "CONTENT:",
+    a.content
+  ].join("\n")).join("\n\n---\n\n");
+}
+
+// One instruction covers both jobs: describe the new entry (title/summary/
+// category/tags) AND flag any existing article it contradicts, with a
+// surgical rewrite of just the contradicting part. Callers that already have
+// their own title/category (manual entry) simply ignore that half of the
+// response and only use "conflicts".
+function buildKbAnalysisInstruction(content, related, categories){
+  const articlesBlock = related.length ? formatArticlesForPrompt(related) : '(no existing articles to compare against)';
+  return `You are filing a new entry into an internal knowledge base for a member-services team.
+
+NEW INFORMATION (verbatim, do not alter it):
+"""
+${content}
+"""
+
+TASK 1 — Describe this entry:
+- "title": a short, specific title (under 12 words) describing what this is about.
+- "summary": one plain sentence someone could scan to recognize this entry later.
+- "category": pick the single best-fitting category. Strongly prefer an EXISTING category from this list if one truly fits: ${categories.length ? categories.join(', ') : '(none saved yet)'}. Only invent a new short category name if none of these fit.
+- "tags": 2-5 short lowercase keyword tags.
+
+TASK 2 — Check for conflicts with what's already saved:
+Compare the NEW INFORMATION against each EXISTING ARTICLE below. An article only conflicts if it states something the new information directly contradicts for the same situation — a different number, timeframe, rule, or requirement. Being on a related topic is not a conflict.
+
+For every existing article with a real conflict:
+- Treat the NEW information as correct and more current than anything it contradicts.
+- Write "revisedContent": the FULL original content of that article, with ONLY the contradicting part removed or corrected. Keep every other sentence, exception, and detail exactly as originally written — do not summarize, shorten, or rewrite parts that are not part of the conflict.
+- Only replace the entire article's content with a short superseded-note if truly nothing else in it remains true or useful.
+- Write "note": under 15 words describing what changed, e.g. "Timeframe changed from 5 days to 10 days."
+Do not include an article in "conflicts" at all if it doesn't genuinely conflict — never touch unrelated articles.
+
+EXISTING ARTICLES:
+${articlesBlock}
+
+Return ONLY valid JSON, no markdown fences, in exactly this shape:
+{"title":"...","summary":"...","category":"...","tags":["...","..."],"conflicts":[{"articleId":"kb_abc","revisedContent":"...","note":"..."}]}`;
+}
+
+function fallbackArticleTitle(content){
+  const line = content.split('\n').map(s => s.trim()).find(Boolean) || 'Untitled';
+  return line.length > 80 ? line.slice(0, 77) + '…' : line;
+}
+
+// Pushes the new article, applies any AI-identified conflict rewrites to the
+// existing articles they touch, and closes the form. Used by both the quick
+// paste flow and the manual full-form flow so conflict handling is consistent
+// no matter how the entry was created.
+function finalizeNewArticle(rec, conflicts, toastOverride){
+  const newArticle = Object.assign(blankArticle(), rec, { id: uid('kb'), createdDate: todayKey(), updatedDate: todayKey() });
+  state.kb.push(newArticle);
+
+  let updatedCount = 0;
+  (conflicts || []).forEach(c => {
+    if (!c || !c.articleId || typeof c.revisedContent !== 'string' || !c.revisedContent.trim()) return;
+    const i = state.kb.findIndex(x => x.id === c.articleId && x.id !== newArticle.id);
+    if (i < 0) return;
+    state.kb[i] = Object.assign({}, state.kb[i], {
+      content: c.revisedContent.trim(),
+      updatedDate: todayKey(),
+      lastAutoNote: (c.note || '').trim(),
+      lastAutoFrom: newArticle.title,
+    });
+    updatedCount++;
+  });
+
+  editingArticleId = null; articleDraft = null;
+  kbQuickText = ''; kbManualMode = false; kbQuickLoading = false; kbManualSaving = false;
+  saveState(); render();
+  showToast(toastOverride || (updatedCount
+    ? `Saved. Updated ${updatedCount} existing article${updatedCount===1?'':'s'} that conflicted with this.`
+    : 'Saved to Knowledge Base'));
+}
+
+async function runQuickAddArticle(){
+  const content = (document.getElementById('kb-quick-content')?.value || '').trim();
+  if (!content) { showToast('Paste something in first'); return; }
+  if (kbQuickLoading) return;
+  kbQuickText = content; kbQuickLoading = true; render();
+
+  const related = relatedArticlesForContent(content);
+  const instruction = buildKbAnalysisInstruction(content, related, kbCategories());
+
+  try {
+    const resp = await fetch('/.netlify/functions/combine', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ instruction }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || ('Request failed (' + resp.status + ')'));
+    const parsed = extractJson(data.result);
+    if (!parsed) throw new Error('Unparseable response');
+
+    finalizeNewArticle({
+      title: (parsed.title || '').trim() || fallbackArticleTitle(content),
+      summary: (parsed.summary || '').trim(),
+      category: (parsed.category || '').trim() || 'Uncategorized',
+      tags: Array.isArray(parsed.tags) ? parsed.tags.filter(t => typeof t === 'string' && t.trim()).slice(0, 6) : [],
+      source: 'Other',
+      sourceDetail: '',
+      content,
+    }, Array.isArray(parsed.conflicts) ? parsed.conflicts : []);
+  } catch (e) {
+    // Never lose what she pasted — file it as-is and let her add details later.
+    finalizeNewArticle({
+      title: fallbackArticleTitle(content),
+      summary: '',
+      category: 'Uncategorized',
+      tags: [],
+      source: 'Other',
+      sourceDetail: '',
+      content,
+    }, [], "Saved — but I couldn't reach the AI to auto-tag it. Edit it to add a title and category.");
+  }
 }
 
 function viewKnowledge(){
@@ -3180,17 +3318,44 @@ function articleRow(a){
         <div style="border-top:1px solid var(--border); margin-top:11px; padding-top:11px;">
           <div class="kb-content">${escapeHtml(a.content)}</div>
           <p class="hint" style="margin-top:10px;">Added ${escapeHtml(a.createdDate||'')}${a.updatedDate && a.updatedDate!==a.createdDate ? ` · updated ${escapeHtml(a.updatedDate)}` : ''}</p>
+          ${a.lastAutoNote ? `<div class="hint" style="margin-top:8px; padding:8px 10px; background:var(--border); border-radius:6px; line-height:1.5;">Auto-updated when "${escapeHtml(a.lastAutoFrom||'a new entry')}" was added: ${escapeHtml(a.lastAutoNote)}</div>` : ''}
         </div>` : ''}
     </div>
   `;
 }
 
 function articleForm(){
+  const isNew = editingArticleId === 'new';
+  if (isNew && !kbManualMode) return articleQuickForm();
+  return articleFullForm();
+}
+
+function articleQuickForm(){
+  return `
+    <div class="card" style="margin-bottom:16px; max-width:660px;">
+      <label class="section">Add article</label>
+      <div class="field">
+        <textarea id="kb-quick-content" rows="10" placeholder="Paste the rule, process, requirements, or steps here — straight from Guru, an email, or wherever it came from." ${kbQuickLoading?'disabled':''}>${escapeHtml(kbQuickText)}</textarea>
+        <p class="hint">I'll figure out the title, category, and tags. If this replaces or corrects something already saved, that entry gets updated in place — not left as a duplicate.</p>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button data-save-quick-article class="btn btn-primary" style="padding:9px 20px;" ${kbQuickLoading?'disabled':''}>${kbQuickLoading ? 'Reading…' : 'Save'}</button>
+        <button data-cancel-article class="btn btn-ghost" style="padding:9px 16px;" ${kbQuickLoading?'disabled':''}>Cancel</button>
+        <button data-manual-article class="btn btn-ghost" style="padding:9px 16px; margin-left:auto; font-size:12.5px;" ${kbQuickLoading?'disabled':''}>Fill in details myself instead</button>
+      </div>
+    </div>
+  `;
+}
+
+function articleFullForm(){
   const d = articleDraft || blankArticle();
   const isNew = editingArticleId === 'new';
   return `
     <div class="card" style="margin-bottom:16px; max-width:660px;">
-      <label class="section">${isNew ? 'Add article' : 'Edit article'}</label>
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <label class="section" style="margin:0;">${isNew ? 'Add article' : 'Edit article'}</label>
+        ${isNew ? `<button data-quick-article class="btn btn-ghost" style="padding:5px 10px; font-size:12.5px;">Back to quick add</button>` : ''}
+      </div>
       <div class="field"><label class="hint">Title *</label><input id="kb-title" value="${escapeAttr(d.title)}" placeholder="When an account transfer needs Exception Committee approval" /></div>
       <div class="field"><label class="hint">Short summary</label><input id="kb-summary" value="${escapeAttr(d.summary)}" placeholder="One line you'd recognise later" /></div>
       <div class="row2 field">
@@ -3218,8 +3383,8 @@ function articleForm(){
         <p class="hint">Paste it as-is. Keep the wording from the original source so answers stay accurate.</p>
       </div>
       <div style="display:flex; gap:8px;">
-        <button data-save-article class="btn btn-primary" style="padding:9px 20px;">Save</button>
-        <button data-cancel-article class="btn btn-ghost" style="padding:9px 16px;">Cancel</button>
+        <button data-save-article class="btn btn-primary" style="padding:9px 20px;" ${kbManualSaving?'disabled':''}>${kbManualSaving ? 'Checking…' : 'Save'}</button>
+        <button data-cancel-article class="btn btn-ghost" style="padding:9px 16px;" ${kbManualSaving?'disabled':''}>Cancel</button>
       </div>
     </div>
   `;
@@ -4574,7 +4739,9 @@ function attachHandlers(){
 
   const newArticleBtn = document.querySelector('[data-new-article]');
   if (newArticleBtn) newArticleBtn.onclick = () => {
-    editingArticleId = 'new'; articleDraft = blankArticle(); render();
+    editingArticleId = 'new'; articleDraft = blankArticle();
+    kbQuickText = ''; kbManualMode = false; kbQuickLoading = false; kbManualSaving = false;
+    render();
   };
 
   document.querySelectorAll('[data-edit-article]').forEach(el => el.onclick = () => {
@@ -4591,9 +4758,34 @@ function attachHandlers(){
     saveState(); render();
   });
 
-  const saveArticleBtn = document.querySelector('[data-save-article]');
-  if (saveArticleBtn) saveArticleBtn.onmousedown = (e) => {
+  // Quick add: paste, AI fills in the fields and checks for conflicts.
+  const saveQuickArticleBtn = document.querySelector('[data-save-quick-article]');
+  if (saveQuickArticleBtn) saveQuickArticleBtn.onmousedown = (e) => {
     e.preventDefault();
+    runQuickAddArticle();
+  };
+
+  const manualArticleBtn = document.querySelector('[data-manual-article]');
+  if (manualArticleBtn) manualArticleBtn.onmousedown = (e) => {
+    e.preventDefault();
+    const typed = document.getElementById('kb-quick-content')?.value || '';
+    kbManualMode = true;
+    articleDraft = Object.assign(blankArticle(), { content: typed });
+    render();
+  };
+
+  const quickArticleBtn = document.querySelector('[data-quick-article]');
+  if (quickArticleBtn) quickArticleBtn.onmousedown = (e) => {
+    e.preventDefault();
+    kbQuickText = document.getElementById('kb-content')?.value || kbQuickText;
+    kbManualMode = false;
+    render();
+  };
+
+  const saveArticleBtn = document.querySelector('[data-save-article]');
+  if (saveArticleBtn) saveArticleBtn.onmousedown = async (e) => {
+    e.preventDefault();
+    if (kbManualSaving) return;
     const title = document.getElementById('kb-title').value.trim();
     const content = document.getElementById('kb-content').value.trim();
     if (!title || !content) { showToast('Title and information are both needed'); return; }
@@ -4608,18 +4800,39 @@ function attachHandlers(){
       updatedDate: todayKey(),
     };
     if (editingArticleId === 'new') {
-      state.kb.push(Object.assign(blankArticle(), rec, { id: uid('kb'), createdDate: todayKey() }));
+      // Same conflict check as quick add, so a contradicting rule gets
+      // corrected in place no matter which way the entry was typed in.
+      kbManualSaving = true; render();
+      let conflicts = [];
+      try {
+        const related = relatedArticlesForContent(content);
+        const instruction = buildKbAnalysisInstruction(content, related, kbCategories());
+        const resp = await fetch('/.netlify/functions/combine', {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ instruction }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok) {
+          const parsed = extractJson(data.result);
+          if (parsed && Array.isArray(parsed.conflicts)) conflicts = parsed.conflicts;
+        }
+      } catch (e2) { /* if the check fails, still save what she typed */ }
+      finalizeNewArticle(rec, conflicts);
     } else {
       const i = state.kb.findIndex(x => x.id === editingArticleId);
       if (i >= 0) state.kb[i] = Object.assign({}, state.kb[i], rec);
+      editingArticleId = null; articleDraft = null;
+      saveState(); render(); showToast('Saved to Knowledge Base');
     }
-    editingArticleId = null; articleDraft = null;
-    saveState(); render(); showToast('Saved to Knowledge Base');
   };
 
   const cancelArticleBtn = document.querySelector('[data-cancel-article]');
   if (cancelArticleBtn) cancelArticleBtn.onmousedown = (e) => {
-    e.preventDefault(); editingArticleId = null; articleDraft = null; render();
+    e.preventDefault();
+    editingArticleId = null; articleDraft = null;
+    kbQuickText = ''; kbManualMode = false; kbQuickLoading = false; kbManualSaving = false;
+    render();
   };
 
   document.querySelectorAll('[data-edit-goal]').forEach(el => el.onclick = () => { editingGoal = true; render(); });
