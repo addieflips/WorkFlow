@@ -64,8 +64,10 @@ function parseLine(line) {
 
 // ---------- date parts ----------
 // Kept as plain parts rather than Date objects so we never accidentally shift a
-// wall-clock time into the server's timezone. UTC values keep the Z; floating
-// and TZID values stay as written and are treated as local time by the browser.
+// wall-clock time into the server's timezone. Recurrences are expanded in the
+// event's own wall-clock time (so DST doesn't nudge a series by an hour), then
+// TZID times are converted to UTC on the way out. Floating times with no zone
+// stay as written and are treated as local time by the browser.
 
 function parseDT(value, params) {
   const v = String(value || '').trim();
@@ -77,6 +79,7 @@ function parseDT(value, params) {
     h: +(m[4] || 0), mi: +(m[5] || 0), s: +(m[6] || 0),
     utc: m[7] === 'Z',
     dateOnly,
+    tzid: (params && params.TZID) || '',
   };
 }
 
@@ -87,7 +90,7 @@ function fromMs(ms, proto) {
   return {
     y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(),
     h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds(),
-    utc: proto.utc, dateOnly: proto.dateOnly,
+    utc: proto.utc, dateOnly: proto.dateOnly, tzid: proto.tzid,
   };
 }
 
@@ -97,6 +100,96 @@ function fmt(p) {
   const date = `${pad(p.y, 4)}-${pad(p.mo)}-${pad(p.d)}`;
   if (p.dateOnly) return date;
   return `${date}T${pad(p.h)}:${pad(p.mi)}:${pad(p.s)}${p.utc ? 'Z' : ''}`;
+}
+
+// ---------- time zones ----------
+// Outlook writes TZIDs as Windows names ("Mountain Standard Time") or sometimes
+// plain "UTC". Ignoring them shows a meeting sent in UTC at the raw UTC hour —
+// an 8 AM Mountain meeting showing as 2 PM.
+
+const WINDOWS_ZONES = {
+  'utc': 'UTC',
+  'gmt': 'UTC',
+  'coordinated universal time': 'UTC',
+  'tzone://microsoft/utc': 'UTC',
+  'greenwich standard time': 'Atlantic/Reykjavik',
+  'gmt standard time': 'Europe/London',
+  'hawaiian standard time': 'Pacific/Honolulu',
+  'alaskan standard time': 'America/Anchorage',
+  'pacific standard time': 'America/Los_Angeles',
+  'pacific time (us & canada)': 'America/Los_Angeles',
+  'us mountain standard time': 'America/Phoenix',
+  'arizona': 'America/Phoenix',
+  'mountain standard time': 'America/Denver',
+  'mountain time (us & canada)': 'America/Denver',
+  'mountain standard time (mexico)': 'America/Mazatlan',
+  'central standard time': 'America/Chicago',
+  'central time (us & canada)': 'America/Chicago',
+  'central standard time (mexico)': 'America/Mexico_City',
+  'canada central standard time': 'America/Regina',
+  'eastern standard time': 'America/New_York',
+  'eastern time (us & canada)': 'America/New_York',
+  'us eastern standard time': 'America/Indianapolis',
+  'atlantic standard time': 'America/Halifax',
+  'newfoundland standard time': 'America/St_Johns',
+  'w. europe standard time': 'Europe/Berlin',
+  'romance standard time': 'Europe/Paris',
+  'central europe standard time': 'Europe/Budapest',
+  'central european standard time': 'Europe/Warsaw',
+  'e. europe standard time': 'Europe/Chisinau',
+  'fle standard time': 'Europe/Kiev',
+  'gtb standard time': 'Europe/Bucharest',
+  'russian standard time': 'Europe/Moscow',
+  'india standard time': 'Asia/Kolkata',
+  'china standard time': 'Asia/Shanghai',
+  'tokyo standard time': 'Asia/Tokyo',
+  'aus eastern standard time': 'Australia/Sydney',
+  'new zealand standard time': 'Pacific/Auckland',
+};
+
+const zoneCache = new Map();
+
+function isValidZone(zone) {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return true; } catch (e) { return false; }
+}
+
+// TZID -> IANA zone name, or null if we can't place it (left as floating).
+function resolveZone(tzid) {
+  const raw = String(tzid || '').trim();
+  if (!raw) return null;
+  if (zoneCache.has(raw)) return zoneCache.get(raw);
+  const key = raw.toLowerCase();
+  // "(UTC-07:00) Mountain Time (US & Canada)" -> "mountain time (us & canada)"
+  const stripped = key.replace(/^\(utc[^)]*\)\s*/, '');
+  let zone = WINDOWS_ZONES[key] || WINDOWS_ZONES[stripped] || null;
+  if (!zone && isValidZone(raw)) zone = raw;
+  if (!zone && /^\(utc\)/.test(key)) zone = 'UTC';
+  zoneCache.set(raw, zone);
+  return zone;
+}
+
+// Offset (ms) of `zone` from UTC at the given instant.
+function zoneOffsetMs(zone, utcMs) {
+  const parts = {};
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(utcMs)).forEach((x) => { parts[x.type] = +x.value; });
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - utcMs;
+}
+
+// Wall-clock parts in `tzid` -> the same moment as UTC parts (with Z).
+// Date-only, already-UTC, and unplaceable floating times pass through.
+function toUtcParts(p) {
+  if (!p || p.dateOnly || p.utc) return p;
+  const zone = resolveZone(p.tzid);
+  if (!zone) return p;
+  const wall = toMs(p);
+  let utc = wall - zoneOffsetMs(zone, wall);
+  // Second pass settles times right next to a DST switch.
+  utc = wall - zoneOffsetMs(zone, utc);
+  return { ...fromMs(utc, p), utc: true, tzid: '' };
 }
 
 // Same calendar day, shifted by n days.
@@ -294,7 +387,7 @@ function parseICS(text, winStartMs, winEndMs) {
       case 'EXDATE':
         p.value.split(',').forEach((v) => {
           const d = parseDT(v, p.params);
-          if (d) cur.exdates.push(fmt(d));
+          if (d) cur.exdates.push(fmt(toUtcParts(d)));
         });
         break;
       default: break;
@@ -303,7 +396,7 @@ function parseICS(text, winStartMs, winEndMs) {
 
   // A moved or edited instance replaces the generated one at its original time.
   const overrideKeys = new Set();
-  overrides.forEach((o) => { if (o.uid && o.recurrenceId) overrideKeys.add(o.uid + '|' + fmt(o.recurrenceId)); });
+  overrides.forEach((o) => { if (o.uid && o.recurrenceId) overrideKeys.add(o.uid + '|' + fmt(toUtcParts(o.recurrenceId))); });
 
   const out = [];
 
@@ -320,8 +413,8 @@ function parseICS(text, winStartMs, winEndMs) {
       title: ev.title || '(no title)',
       location: ev.location || '',
       allDay: !!startParts.dateOnly,
-      start: fmt(startParts),
-      end: endParts ? fmt(endParts) : null,
+      start: fmt(toUtcParts(startParts)),
+      end: endParts ? fmt(toUtcParts(endParts)) : null,
     });
   };
 
@@ -340,7 +433,7 @@ function parseICS(text, winStartMs, winEndMs) {
     if (ev.rrule) {
       const occurrences = expandRecurrence(ev.start, ev.rrule, winStartMs, winEndMs);
       occurrences.forEach((p) => {
-        const key = fmt(p);
+        const key = fmt(toUtcParts(p));
         if (ev.exdates.includes(key)) return;
         if (ev.uid && overrideKeys.has(ev.uid + '|' + key)) return;
         push(ev, p);
