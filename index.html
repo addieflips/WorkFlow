@@ -161,6 +161,7 @@
   .orph-table td{ padding:8px 6px; border-bottom:1px solid var(--border); vertical-align:top; }
   .orph-table tr.orph-bad td{ background:#FDF1F0; }
   .orph-table tr.orph-warn td{ background:#FEF9EE; }
+  .orph-table tr.orph-sel td{ background:var(--primary-soft); }
   .orph-pick{ width:auto; max-width:300px; padding:4px 8px; font-size:12.5px; }
   .orph-ll{ display:inline-flex; gap:4px; align-items:center; }
   .orph-ll input{ width:80px; padding:4px 7px; font-size:12.5px; }
@@ -5841,6 +5842,9 @@ let orphanCountryPaste = null;   // null = not editing
 let orphanSetupOpen = false;
 let orphanGeo = null;            // { done, total, failed } while looking up locations
 let orphanError = '';
+let orphanLocOpen = false;       // Leader locations panel
+let orphanLocCountry = '';       // country shown in detail
+let orphanLocAll = false;        // show every leader, not just problems
 
 function monthKey(){ return todayKey().slice(0,7); }
 function monthLabel(key){
@@ -5865,6 +5869,7 @@ function orphanData(){
   if (!o.batch) o.batch = { orphans: [], overrides: {}, inboxes: {}, tabOverride: '' };
   if (!o.batch.overrides) o.batch.overrides = {};
   if (!o.batch.inboxes) o.batch.inboxes = {};       // orphan id -> inbox picked by hand
+  if (!o.leaderFix || typeof o.leaderFix !== 'object') o.leaderFix = {};  // leader id -> [lat, lon] | 'list' | { zip }
   if (!o.used || typeof o.used !== 'object') o.used = { month: monthKey(), ids: [] };
   // A leader can get one orphan per month, so the list starts over each month.
   if (o.used.month !== monthKey()) o.used = { month: monthKey(), ids: [] };
@@ -5956,12 +5961,60 @@ function orphanLeaderSuspect(l){
   return !!mid && haversineMiles([lat, lon], mid) > 2500;
 }
 
-function orphanLeaderCoords(l){
+function orphanZipCountry(match){ return ORPHAN_ZIP_COUNTRIES.includes(match); }
+function orphanZip(z){ return String(z || '').trim().toUpperCase().replace(/\s+/g, ''); }
+function orphanLeaderPostal(l){
+  const fix = orphanData().leaderFix[l[0]];
+  return orphanZip((fix && fix.zip) || l[8]);
+}
+
+// City and postal code together pin a leader down; city alone is ambiguous
+// (Germany has a dozen towns called Berg).
+function orphanLeaderCheckParams(l){
+  let zip = orphanZip(l[8]);
+  if (l[2] === 'United States') zip = zip.split('-')[0];
+  const p = { country: l[2] };
+  if (l[3]) p.city = l[3];
+  if (zip) p.postalcode = zip;
+  return p;
+}
+function orphanLeaderCheckKey(l){
+  const p = orphanLeaderCheckParams(l);
+  return 'chk:' + orphanNorm(p.city) + '|' + orphanNorm(p.postalcode) + '|' + orphanNorm(l[2]);
+}
+
+// Where a leader is, and how sure we are. A looked-up location more than
+// 50 miles from the list's lat/lon wins, unless the user says otherwise.
+function orphanLeaderLocation(l){
+  const o = orphanData();
+  const fix = o.leaderFix[l[0]];
   const lat = orphanNum(l[4]), lon = orphanNum(l[5]);
-  if (!isNaN(lat) && !isNaN(lon) && !orphanLeaderSuspect(l)) return [lat, lon];
-  // Missing or suspect: only a looked-up location will do.
-  for (const k of orphanLeaderKeys(l)) { const hit = orphanPlace(k); if (hit) return hit; }
-  return null;
+  const list = !isNaN(lat) && !isNaN(lon) ? [lat, lon] : null;
+  if (Array.isArray(fix)) return { coords: fix, status: 'fixed', list };
+  if (fix === 'list' && list) return { coords: list, status: 'kept', list };
+  const chk = o.places[orphanLeaderCheckKey(l)];
+  const checked = Array.isArray(chk) && chk.length === 2 ? chk : null;
+  const notFound = Array.isArray(chk) && !chk.length;
+  if (list && !orphanLeaderSuspect(l)) {
+    if (!checked) return { coords: list, status: 'ok', list, notFound };
+    const off = haversineMiles(list, checked);
+    return off > 50 ? { coords: checked, status: 'off', list, checked, off } : { coords: list, status: 'ok', list, checked, off };
+  }
+  if (checked) return { coords: checked, status: list ? 'off' : 'found', list, checked, off: list ? haversineMiles(list, checked) : null };
+  for (const k of orphanLeaderKeys(l)) { const hit = orphanPlace(k); if (Array.isArray(hit) && hit.length === 2) return { coords: hit, status: 'found', list }; }
+  return { coords: null, status: notFound ? 'notfound' : (list ? 'suspect' : 'missing'), list };
+}
+
+function orphanLeaderCoords(l){ return orphanLeaderLocation(l).coords; }
+
+// Postal-code countries match by the closest zip code, as in the SOP: the
+// longest shared prefix wins, then the smallest numeric gap.
+function orphanZipScore(a, b){
+  let prefix = 0;
+  while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;
+  const na = Number(a.replace(/\D/g, '')), nb = Number(b.replace(/\D/g, ''));
+  const gap = a === b ? 0 : (/\d/.test(a) && /\d/.test(b) && a.replace(/\D/g,'').length === b.replace(/\D/g,'').length ? Math.abs(na - nb) : 1e12);
+  return { prefix, gap };
 }
 
 function orphanLastPull(){
@@ -6056,10 +6109,12 @@ function orphanEligibleLeaders(){
   const byCountry = new Map();
   o.leaders.forEach((l, idx) => {
     if (l[7] !== tab || (Number(l[6]) || 0) !== 0 || used.has(String(l[0]))) return;
-    const coords = orphanLeaderCoords(l);
-    if (!coords) return;
+    const zipC = orphanZipCountry(l[2]);
+    const coords = zipC ? null : orphanLeaderCoords(l);
+    const postal = orphanLeaderPostal(l);
+    if (zipC ? !postal : !coords) return;
     if (!byCountry.has(l[2])) byCountry.set(l[2], []);
-    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', city: l[3] || '', postal: l[8] || '', coords });
+    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', city: l[3] || '', postal, coords });
   });
   return byCountry;
 }
@@ -6077,6 +6132,15 @@ function computeOrphanResults(){
     if (/\btest\b/i.test(r.name)) { row.status = 'test'; return row; }
     if (orphanSelfPlacing(r.country)) { row.status = 'selfplace'; return row; }
     if (c.match === 'CHECK COUNTRY') { row.status = 'checkcountry'; return row; }
+    if (orphanZipCountry(c.match)) {
+      const z = orphanZip(r.postal);
+      if (!z) { row.status = 'needzip'; return row; }
+      row.byZip = true;
+      row.ranked = (byCountry.get(c.match) || [])
+        .map(l => ({ l, miles: null, score: orphanZipScore(z, l.postal) }))
+        .sort((a, b) => b.score.prefix - a.score.prefix || a.score.gap - b.score.gap || a.l.idx - b.l.idx);
+      return row;
+    }
     row.coords = orphanCoords(r, c.match);
     if (!row.coords) { row.status = 'needcoords'; return row; }
     row.ranked = (byCountry.get(c.match) || [])
@@ -6113,6 +6177,7 @@ const ORPHAN_STATUS = {
   selfplace:    { label:'Market places its own – remove', tone:'warn' },
   checkcountry: { label:'EO/GAC – use the real country', tone:'warn' },
   needcoords:   { label:'Needs location',             tone:'warn' },
+  needzip:      { label:'Needs postal code',          tone:'warn' },
   noleader:     { label:'No eligible leader in country – place by hand', tone:'bad' },
 };
 
@@ -6134,7 +6199,7 @@ function orphanTsv(rows, kind){
   if (kind === 'ready') return rows.map(r => [r.id, orphanLeaderIdOf(r), r.match, r.inbox].join('\t')).join('\n');
   const head = ['Orphan ID','Orphan Name','Country','Leader ID (enroller)','Leader Name','Distance (miles)','Inbox','Assigned date'];
   const date = new Date().toLocaleDateString('en-US');
-  return [head, ...rows.map(r => [r.id, r.name, r.match, orphanLeaderIdOf(r), orphanLeaderNameOf(r), r.miles == null ? '' : r.miles, r.inbox, date])]
+  return [head, ...rows.map(r => [r.id, r.name, r.match, orphanLeaderIdOf(r), orphanLeaderNameOf(r), r.miles == null ? (r.byZip && r.leader ? 'zip ' + r.leader.postal : '') : r.miles, r.inbox, date])]
     .map(c => c.join('\t')).join('\n');
 }
 
@@ -6256,38 +6321,71 @@ function orphanLookupJobs(rows){
   const o = orphanData(), tab = orphanTabToday();
   const countries = new Set(rows.map(r => r.match));
   o.leaders.forEach(l => {
-    if (l[7] !== tab || !countries.has(l[2]) || orphanLeaderCoords(l)) return;
-    const key = orphanLeaderKeys(l)[0];
-    if (!key) return;
-    jobs.set(key, key.startsWith('zip:') ? { postalcode: l[8], country: l[2] } : { city: l[3], country: l[2] });
+    if (l[7] !== tab || !countries.has(l[2]) || orphanZipCountry(l[2]) || orphanLeaderCoords(l)) return;
+    const key = orphanLeaderCheckKey(l), params = orphanLeaderCheckParams(l);
+    if (o.places[key] || (!params.city && !params.postalcode)) return;
+    jobs.set(key, params);
   });
   return [...jobs.entries()];
 }
 
-async function runOrphanLookup(){
-  const jobs = orphanLookupJobs(computeOrphanResults());
+// Every leader place in a country not checked yet (both tabs).
+function orphanCountryCheckJobs(country){
+  const o = orphanData(), jobs = new Map();
+  o.leaders.forEach(l => {
+    if (l[2] !== country || o.leaderFix[l[0]]) return;
+    const key = orphanLeaderCheckKey(l), params = orphanLeaderCheckParams(l);
+    if (o.places[key] || (!params.city && !params.postalcode)) return;
+    jobs.set(key, params);
+  });
+  return [...jobs.entries()];
+}
+
+const orphanSleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Most specific first; OpenStreetMap allows one request per second.
+async function orphanGeocodeBest(params){
+  const tries = [];
+  if (params.city && params.postalcode) tries.push({ city: params.city, postalcode: params.postalcode, country: params.country });
+  if (params.postalcode) tries.push({ postalcode: params.postalcode, country: params.country });
+  if (params.city && params.state) tries.push({ city: params.city, state: params.state, country: params.country });
+  if (params.city) tries.push({ city: params.city, country: params.country });
+  for (let i = 0; i < tries.length; i++) {
+    if (i) await orphanSleep(1100);
+    const hit = await orphanGeocode(tries[i]);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+async function runOrphanGeoJobs(jobs, label){
   if (!jobs.length) { showToast('Nothing to look up'); return; }
-  orphanGeo = { done: 0, total: jobs.length, failed: [] };
+  orphanGeo = { done: 0, total: jobs.length, failed: [], label, stop: false };
   render();
   const places = orphanData().places;
   for (const [key, params] of jobs) {
-    try {
-      let hit = await orphanGeocode(params);
-      // A state the geocoder doesn't recognise shouldn't sink the whole lookup.
-      if (!hit && params.state) { await new Promise(r => setTimeout(r, 1100)); hit = await orphanGeocode({ city: params.city, country: params.country }); }
-      if (hit) places[key] = hit; else orphanGeo.failed.push(params.city || params.postalcode);
-    } catch (e) {
+    if (orphanGeo.stop) break;
+    let hit = null;
+    try { hit = await orphanGeocodeBest(params); } catch (e) { hit = undefined; }
+    if (hit) places[key] = hit;
+    else {
       orphanGeo.failed.push(params.city || params.postalcode);
+      // Remember a clean miss for leader checks so it isn't asked again.
+      if (hit === null && key.startsWith('chk:')) places[key] = [];
     }
     orphanGeo.done++;
     render();
-    // OpenStreetMap's free service allows one request per second.
-    await new Promise(r => setTimeout(r, 1100));
+    await orphanSleep(1100);
   }
-  const failed = orphanGeo.failed;
+  const { failed, done } = orphanGeo;
   orphanGeo = null;
   saveState();
-  showToast(failed.length ? `${failed.length} place${failed.length===1?'':'s'} not found — type lat/lon by hand` : 'Locations found');
+  render();
+  showToast(failed.length ? `Checked ${done}; ${failed.length} not found — type lat/lon by hand` : `Checked ${done}`);
+}
+
+async function runOrphanLookup(){
+  await runOrphanGeoJobs(orphanLookupJobs(computeOrphanResults()), 'Looking up locations');
 }
 
 // ---- view ----
@@ -6314,10 +6412,14 @@ function viewOrphans(){
         <div class="page-title">Orphan placement</div>
         <div class="subtle">Closest eligible leader in the same country · one orphan per leader per month</div>
       </div>
-      <button data-orph-setup class="btn btn-ghost" style="padding:8px 14px;">${icon('wand',15)} ${orphanSetupOpen ? 'Hide' : 'Monthly'} setup</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button data-orph-loc class="btn btn-ghost" style="padding:8px 14px;">${icon('pin',15)} ${orphanLocOpen ? 'Hide leader' : 'Leader'} locations</button>
+        <button data-orph-setup class="btn btn-ghost" style="padding:8px 14px;">${icon('wand',15)} ${orphanSetupOpen ? 'Hide' : 'Monthly'} setup</button>
+      </div>
     </div>
 
     ${orphanError ? `<div class="card orph-alert">${escapeHtml(orphanError)}</div>` : ''}
+    ${orphanLocOpen ? orphanLocationsPanel() : ''}
     ${orphanSetupOpen || ORPHAN_TABS.some(t => !o.leaders.some(l => l[7] === t)) ? orphanSetupPanel() : ''}
 
     <div class="card" style="margin-bottom:16px;">
@@ -6365,7 +6467,7 @@ function viewOrphans(){
         ${geoJobs || orphanGeo ? `
           <div class="orph-geo">
             ${orphanGeo
-              ? `Looking up locations… ${orphanGeo.done} of ${orphanGeo.total}`
+              ? `${escapeHtml(orphanGeo.label)}… ${orphanGeo.done} of ${orphanGeo.total} <button data-orph-geo-stop class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Stop</button>`
               : `<span>${geoJobs} place${geoJobs===1?'':'s'} need a location (${count('needcoords')} orphan${count('needcoords')===1?'':'s'}; the rest are leaders in today's countries with no or wrong lat/lon). Takes about a second each, and each place is remembered.</span> <button data-orph-geo class="btn btn-primary" style="padding:6px 12px;">${icon('globe',14)} Look up locations</button>`}
           </div>` : ''}
       </div>
@@ -6428,8 +6530,10 @@ function orphanRow(r){
     leaderCell = r.options.length ? `
       <select data-orph-pick="${escapeAttr(r.id)}" class="orph-pick">
         ${r.leader ? '' : '<option value="">Pick a leader (takes them from another orphan)</option>'}
-        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)} (${x.miles} mi)${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
+        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)} (${x.miles != null ? x.miles + ' mi' : 'zip ' + escapeHtml(x.l.postal)})${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
       </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}` : '—';
+  } else if (r.status === 'needzip') {
+    leaderCell = `<span class="orph-ll"><input data-orph-zip="${escapeAttr(r.id)}" placeholder="Postal code" style="width:110px;" /><button data-orph-zip-save="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
   } else if (r.status === 'needcoords') {
     leaderCell = `<span class="orph-ll"><input data-orph-lat="${escapeAttr(r.id)}" placeholder="Lat" /><input data-orph-lon="${escapeAttr(r.id)}" placeholder="Lon" /><button data-orph-ll="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
   }
@@ -6439,7 +6543,7 @@ function orphanRow(r){
       <td><div style="font-weight:600;">${escapeHtml(r.id)}</div><div class="subtle" style="font-size:12px;">${escapeHtml(r.name)}</div></td>
       <td>${escapeHtml(r.match)}<div class="subtle" style="font-size:12px;">${escapeHtml(where)}</div></td>
       <td>${leaderCell}</td>
-      <td>${r.miles == null ? '' : r.miles}</td>
+      <td>${r.byZip && r.leader ? 'zip ' + escapeHtml(r.leader.postal) : (r.miles == null ? '' : r.miles)}</td>
       <td>${['ready','retail','noleader'].includes(r.status) ? `
         <select data-orph-inbox="${escapeAttr(r.id)}" class="orph-pick" style="${r.inbox ? '' : 'border-color:#E0A33B;'}">
           ${r.inbox ? '' : '<option value="">Pick inbox</option>'}
@@ -6450,10 +6554,109 @@ function orphanRow(r){
     </tr>`;
 }
 
+const ORPHAN_LOC_STATUS = {
+  ok:       { label: 'OK', tone: 'ok' },
+  found:    { label: 'Looked up', tone: 'ok' },
+  fixed:    { label: 'Fixed by you', tone: 'ok' },
+  kept:     { label: "Keeping the list's lat/lon", tone: 'ok' },
+  zip:      { label: 'Matched by zip code', tone: 'ok' },
+  off:      { label: 'List lat/lon is off — using looked-up', tone: 'warn' },
+  suspect:  { label: 'Lat/lon outside the country — not used', tone: 'bad' },
+  missing:  { label: 'No lat/lon — not used', tone: 'bad' },
+  notfound: { label: 'Not found — type lat/lon', tone: 'bad' },
+  nozip:    { label: 'No postal code — not used', tone: 'bad' },
+};
+const ORPHAN_LOC_PROBLEMS = ['off', 'suspect', 'missing', 'notfound', 'nozip'];
+
+function orphanLeaderLocStatus(l){
+  if (orphanZipCountry(l[2])) return { status: orphanLeaderPostal(l) ? 'zip' : 'nozip' };
+  return orphanLeaderLocation(l);
+}
+
+function orphanFmtLL(ll){ return ll ? ll.map(v => Math.round(v * 10000) / 10000).join(', ') : '—'; }
+
+function orphanLocationsPanel(){
+  const o = orphanData();
+  const byCountry = new Map();
+  o.leaders.forEach(l => {
+    if (!byCountry.has(l[2])) byCountry.set(l[2], { total: 0, problems: 0 });
+    const c = byCountry.get(l[2]);
+    c.total++;
+    if (ORPHAN_LOC_PROBLEMS.includes(orphanLeaderLocStatus(l).status)) c.problems++;
+  });
+  const countries = [...byCountry.entries()].sort((a, b) => b[1].problems - a[1].problems || a[0].localeCompare(b[0]));
+  const sel = orphanLocCountry && byCountry.has(orphanLocCountry) ? orphanLocCountry : '';
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Leader locations</label>
+      <div class="hint" style="margin:0 0 10px;">The leader list's lat/lon is often wrong. <b>Check</b> looks up every leader's city and postal code in a country (about a second each, remembered after that) and flags any list lat/lon more than 50 miles off; the looked-up one is used unless you keep the list's. ${ORPHAN_ZIP_COUNTRIES.join(', ')} match by zip code instead, so they only need a postal code.</div>
+      ${orphanGeo ? `<div class="orph-geo">${escapeHtml(orphanGeo.label)}… ${orphanGeo.done} of ${orphanGeo.total} <button data-orph-geo-stop class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Stop</button></div>` : ''}
+      ${!o.leaders.length ? `<div class="subtle">Paste the leader list under Monthly setup first.</div>` : `
+      <div class="orph-table-wrap" style="max-height:320px; overflow-y:auto; margin-top:10px;">
+        <table class="orph-table">
+          <thead><tr><th>Country</th><th>Leaders</th><th>Problems</th><th></th></tr></thead>
+          <tbody>${countries.map(([c, n]) => {
+            const zipC = orphanZipCountry(c);
+            const left = zipC ? 0 : orphanCountryCheckJobs(c).length;
+            return `<tr class="${sel === c ? 'orph-sel' : ''}">
+              <td><a href="#" data-orph-loc-country="${escapeAttr(c)}" style="color:var(--primary-dark); font-weight:600;">${escapeHtml(c)}</a></td>
+              <td>${n.total}</td>
+              <td>${n.problems ? `<span class="orph-pill orph-pill-${zipC ? 'bad' : 'warn'}">${n.problems}</span>` : '<span class="subtle">0</span>'}</td>
+              <td>${zipC ? '<span class="subtle">Matches by zip code</span>' : left ? `<button data-orph-loc-check="${escapeAttr(c)}" class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;" ${orphanGeo ? 'disabled' : ''}>Check ${left} place${left === 1 ? '' : 's'} (~${Math.max(1, Math.round(left * 1.3 / 60))} min)</button>` : '<span class="subtle">All checked</span>'}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+      ${sel ? orphanLocationsDetail(sel) : `<div class="subtle" style="margin-top:10px; font-size:13px;">Click a country to see and fix its leaders.</div>`}`}
+    </div>`;
+}
+
+function orphanLocationsDetail(country){
+  const o = orphanData();
+  const zipC = orphanZipCountry(country);
+  const all = o.leaders.filter(l => l[2] === country).map(l => ({ l, loc: orphanLeaderLocStatus(l) }));
+  const shown = orphanLocAll ? all : all.filter(x => ORPHAN_LOC_PROBLEMS.includes(x.loc.status) || o.leaderFix[x.l[0]]);
+  const cap = 300;
+  return `
+    <div class="role-block">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+        <div style="font-weight:600; font-size:14px;">${escapeHtml(country)} <span class="subtle" style="font-weight:400;">· ${orphanLocAll ? 'all ' + all.length + ' leaders' : shown.length + ' to look at'}</span></div>
+        <label class="subtle" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" data-orph-loc-all ${orphanLocAll ? 'checked' : ''} style="width:auto;" /> Show every leader</label>
+      </div>
+      ${!shown.length ? `<div class="subtle" style="font-size:13px;">Nothing to fix here${zipC ? '' : orphanCountryCheckJobs(country).length ? ' yet — click Check to compare the list against the looked-up locations' : ''}.</div>` : `
+      <div class="orph-table-wrap">
+        <table class="orph-table">
+          <thead><tr><th>Leader</th><th>City / postal</th>${zipC ? '' : '<th>List lat/lon</th><th>Looked up</th>'}<th>Status</th><th>Fix</th></tr></thead>
+          <tbody>${shown.slice(0, cap).map(({ l, loc }) => {
+            const st = ORPHAN_LOC_STATUS[loc.status] || { label: loc.status, tone: '' };
+            const id = escapeAttr(l[0]);
+            const fix = o.leaderFix[l[0]];
+            const fixCell = zipC ? `
+              <span class="orph-ll"><input data-orph-fix-zip="${id}" placeholder="Postal code" value="${escapeAttr((fix && fix.zip) || '')}" style="width:100px;" /><button data-orph-fix-zip-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button>${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}</span>` : `
+              <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                ${loc.checked && loc.status !== 'fixed' ? `<button data-orph-fix-use="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Use looked-up</button>` : ''}
+                ${loc.list && loc.status !== 'kept' && loc.status !== 'ok' ? `<button data-orph-fix-keep="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Keep list's</button>` : ''}
+                <span class="orph-ll"><input data-orph-fix-lat="${id}" placeholder="Lat" /><input data-orph-fix-lon="${id}" placeholder="Lon" /><button data-orph-fix-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>
+                ${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}
+              </div>`;
+            return `<tr class="orph-${st.tone === 'ok' ? '' : st.tone}">
+              <td><div style="font-weight:600;">${escapeHtml(l[0])}</div><div class="subtle" style="font-size:12px;">${escapeHtml(l[7])}</div></td>
+              <td>${escapeHtml(l[3] || '—')}<div class="subtle" style="font-size:12px;">${escapeHtml(orphanLeaderPostal(l) || '')}</div></td>
+              ${zipC ? '' : `<td>${orphanFmtLL(loc.list)}</td><td>${Array.isArray(fix) ? orphanFmtLL(fix) : orphanFmtLL(loc.checked)}${loc.off != null && loc.off > 50 ? `<div class="subtle" style="font-size:12px;">${Math.round(loc.off)} mi apart</div>` : ''}</td>`}
+              <td><span class="orph-pill orph-pill-${st.tone}">${escapeHtml(st.label)}</span></td>
+              <td>${fixCell}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+      ${shown.length > cap ? `<div class="hint">Showing the first ${cap} of ${shown.length}.</div>` : ''}`}
+    </div>`;
+}
+
 function orphanSetupPanel(){
   const o = orphanData();
   const n = t => o.leaders.filter(l => l[7] === t).length;
-  const missing = t => o.leaders.filter(l => l[7] === t && !orphanLeaderCoords(l)).length;
+  const missing = t => o.leaders.filter(l => l[7] === t && ['suspect','missing','notfound','nozip'].includes(orphanLeaderLocStatus(l).status)).length;
   const suspect = t => o.leaders.filter(l => l[7] === t && orphanLeaderSuspect(l)).length;
   const countryText = orphanCountryPaste !== null ? orphanCountryPaste : o.countryExtra.map(r => r.join(', ')).join('\n');
   return `
@@ -6464,7 +6667,7 @@ function orphanSetupPanel(){
         ${ORPHAN_TABS.map(t => `
           <div>
             <div style="font-weight:600; font-size:14px; margin-bottom:4px;">${t} PGB tab</div>
-            <div class="subtle" style="font-size:12.5px; margin-bottom:6px;">${n(t)} leaders${o.leadersUpdated[t] ? ' · pasted ' + escapeHtml(o.leadersUpdated[t]) : ''}${missing(t) ? ` · <span style="color:#B4690E;">${missing(t)} need a location looked up${suspect(t) ? ` (${suspect(t)} had a lat/lon outside their country)` : ''}</span>` : ''}</div>
+            <div class="subtle" style="font-size:12.5px; margin-bottom:6px;">${n(t)} leaders${o.leadersUpdated[t] ? ' · pasted ' + escapeHtml(o.leadersUpdated[t]) : ''}${missing(t) ? ` · <span style="color:#B4690E;">${missing(t)} without a usable location — see Leader locations</span>` : ''}</div>
             <textarea data-orph-leader-paste="${t}" rows="4" placeholder="Paste the ${t} tab here">${escapeHtml(orphanLeaderPaste[t])}</textarea>
             <button data-orph-leader-load="${t}" class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Replace ${t} leaders</button>
           </div>`).join('')}
@@ -6643,6 +6846,46 @@ function attachOrphanHandlers(){
   all('[data-orph-download]', el => el.onclick = () => {
     const inbox = el.getAttribute('data-orph-download');
     orphanDownload(inbox + ' Orphans.csv', orphanCsv(orphanEmailRows().filter(r => r.inbox === inbox)));
+  });
+
+  const locBtn = q('[data-orph-loc]');
+  if (locBtn) locBtn.onclick = () => { orphanLocOpen = !orphanLocOpen; render(); };
+  all('[data-orph-loc-country]', el => el.onclick = (e) => { e.preventDefault(); orphanLocCountry = el.getAttribute('data-orph-loc-country'); orphanLocAll = false; render(); });
+  all('[data-orph-loc-check]', el => el.onclick = () => {
+    const c = el.getAttribute('data-orph-loc-check');
+    orphanLocCountry = c;
+    runOrphanGeoJobs(orphanCountryCheckJobs(c), 'Checking ' + c);
+  });
+  const locAll = q('[data-orph-loc-all]');
+  if (locAll) locAll.onchange = () => { orphanLocAll = locAll.checked; render(); };
+  all('[data-orph-geo-stop]', el => el.onclick = () => { if (orphanGeo) orphanGeo.stop = true; });
+  const leaderById = id => o.leaders.find(l => String(l[0]) === id);
+  all('[data-orph-fix-use]', el => el.onclick = () => {
+    const l = leaderById(el.getAttribute('data-orph-fix-use'));
+    const loc = l && orphanLeaderLocation(l);
+    if (loc && loc.checked) { o.leaderFix[l[0]] = loc.checked; saveState(); render(); }
+  });
+  all('[data-orph-fix-keep]', el => el.onclick = () => { o.leaderFix[el.getAttribute('data-orph-fix-keep')] = 'list'; saveState(); render(); });
+  all('[data-orph-fix-reset]', el => el.onclick = () => { delete o.leaderFix[el.getAttribute('data-orph-fix-reset')]; saveState(); render(); });
+  all('[data-orph-fix-save]', el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-fix-save');
+    const lat = orphanNum(q(`[data-orph-fix-lat="${CSS.escape(id)}"]`).value);
+    const lon = orphanNum(q(`[data-orph-fix-lon="${CSS.escape(id)}"]`).value);
+    if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
+    o.leaderFix[id] = [lat, lon]; saveState(); render(); showToast('Location saved for ' + id);
+  });
+  all('[data-orph-fix-zip-save]', el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-fix-zip-save');
+    const zip = orphanZip(q(`[data-orph-fix-zip="${CSS.escape(id)}"]`).value);
+    if (!zip) { showToast('Enter a postal code'); return; }
+    o.leaderFix[id] = { zip }; saveState(); render(); showToast('Postal code saved for ' + id);
+  });
+  all('[data-orph-zip-save]', el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-zip-save');
+    const zip = orphanZip(q(`[data-orph-zip="${CSS.escape(id)}"]`).value);
+    const row = o.batch.orphans.find(r => r.id === id);
+    if (!zip || !row) { showToast('Enter a postal code'); return; }
+    row.postal = zip; saveState(); render();
   });
 
   const finishBtn = q('[data-orph-finish]');
