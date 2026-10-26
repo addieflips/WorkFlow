@@ -6067,6 +6067,99 @@ function orphanTsv(rows, kind){
     .map(c => c.join('\t')).join('\n');
 }
 
+// ---- mass emails (SOP Phase 7) ----
+const CONTACT_FIELDS = [
+  { key:'id',    label:'ID',    re:/(^|\b)id$|^id\b|number/i, required:true, prio:5 },
+  { key:'type',  label:'Type',  re:/type/i, prio:1 },
+  { key:'first', label:'First name', re:/first/i, prio:2 },
+  { key:'last',  label:'Last name',  re:/last|surname/i, prio:2 },
+  { key:'name',  label:'Name',  re:/name/i, prio:6 },
+  { key:'email', label:'Email', re:/e-?mail/i, required:true, prio:1 },
+];
+
+// Retail customers are already in the 12 Retail tree and get no email, nor
+// does anyone listed as already placed.
+function orphanEmailRows(){
+  const f = orphanData().lastFinished;
+  if (!f) return [];
+  const skip = new Set(String(f.skip || '').split(/[\s,]+/).filter(Boolean));
+  const contacts = f.contacts || {};
+  return f.rows.filter(r => r.leader && !skip.has(r.id)).map(r => {
+    const oc = contacts[r.id] || {}, lc = contacts[r.leader.id] || {};
+    return {
+      inbox: r.inbox || 'No inbox',
+      enrollerName: lc.name || r.leader.name || '',
+      enrollerEmail: lc.email || '',
+      orphanId: r.id,
+      orphanName: oc.name || r.name || '',
+      orphanEmail: oc.email || '',
+      leaderId: r.leader.id,
+    };
+  });
+}
+
+function orphanCsv(rows){
+  const cell = v => /[",\n]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+  // "Email" is the enroller's address so Word picks it up for the enroller template.
+  const head = ['Enroller Name','Email','Orphan ID','Orphan Name','Orphan Email'];
+  return '﻿' + [head, ...rows.map(r => [r.enrollerName, r.enrollerEmail || 'NA', r.orphanId, r.orphanName, r.orphanEmail || 'NA'])]
+    .map(c => c.map(cell).join(',')).join('\r\n');
+}
+
+function orphanDownload(name, text){
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+let orphanContactPaste = '';
+
+function orphanEmailPanel(){
+  const f = orphanData().lastFinished;
+  const rows = orphanEmailRows();
+  if (!rows.length && !f.skip) return '';
+  const haveContacts = Object.keys(f.contacts || {}).length > 0;
+  const byInbox = new Map();
+  rows.forEach(r => { if (!byInbox.has(r.inbox)) byInbox.set(r.inbox, []); byInbox.get(r.inbox).push(r); });
+  const missing = rows.flatMap(r => [
+    ...(r.enrollerEmail ? [] : [r.leaderId + ' (enroller)']),
+    ...(r.orphanEmail ? [] : [r.orphanId + ' (orphan)']),
+  ]);
+  return `
+    <div class="role-block">
+      <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Mass emails</div>
+      <div class="hint" style="margin:0 0 10px;">Do this once every pull for the day is finished. Retail customers are left out.</div>
+
+      <div class="field" style="margin-bottom:10px;">
+        <label class="hint" style="display:block; margin:0 0 4px;">Orphan IDs to leave out (already placed before you got to them)</label>
+        <input id="orph-email-skip" value="${escapeAttr(f.skip || '')}" placeholder="e.g. 12345678, 23456789" />
+      </div>
+
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+        <span class="subtle" style="font-size:13px;"><b>a.</b> Copy every orphan and enroller ID, paste into the BI Distributor List, and download it as Excel (not CSV).</span>
+        <button data-orph-copy-bi class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} IDs for BI</button>
+      </div>
+      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Paste the BI rows here, header row included (ID, name, email). Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}</div>
+      <textarea id="orph-contact-paste" rows="3" placeholder="Paste from the BI download">${escapeHtml(orphanContactPaste)}</textarea>
+      <button data-orph-contacts-load class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load contacts</button>
+
+      ${haveContacts ? `
+        ${missing.length ? `<div class="orph-geo" style="display:block;"><b>${missing.length} missing email${missing.length===1?'':'s'}</b>. Check DataTrax; if there's still none, they go out as NA. ${escapeHtml(missing.join(', '))}</div>` : ''}
+        <div class="subtle" style="font-size:13px; margin:14px 0 6px;"><b>c.</b> Download one recipient file per inbox, save it to the desktop, and close it before Word uses it. Enroller template: To = <b>Email</b>. Orphan template: To = <b>Orphan Email</b>.</div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          ${[...byInbox.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([inbox, list]) => `
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;">
+              <span style="font-weight:600; font-size:13.5px;">${escapeHtml(inbox)} <span class="subtle" style="font-weight:400;">· ${list.length} email${list.length===1?'':'s'} per template</span></span>
+              <button data-orph-download="${escapeAttr(inbox)}" class="btn btn-ghost" style="padding:5px 11px; font-size:13px;">Download ${escapeHtml(inbox)} Orphans.csv</button>
+            </div>`).join('')}
+        </div>
+        <div class="hint">Check the default inbox three times before every send. Never send from Exceptions.</div>
+      ` : ''}
+    </div>`;
+}
+
 // ---- location lookup (replaces Data → Geography and the ChatGPT step) ----
 async function orphanGeocode(params){
   const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&' + new URLSearchParams(params);
@@ -6222,11 +6315,12 @@ function viewOrphans(){
       </div>
     ` : ''}
 
-    ${o.lastFinished && !rows.length ? `
+    ${o.lastFinished ? `
       <div class="card" style="margin-bottom:16px;">
-        <label class="section">Last finished pull · ${escapeHtml(fmtDate(o.lastFinished.date))} · ${escapeHtml(o.lastFinished.tab)}</label>
-        <div class="subtle" style="margin-bottom:10px;">${o.lastFinished.rows.length} placed. Copy again if you still need them for Ready or the emails.</div>
+        <label class="section">${o.lastFinished.date === todayKey() ? 'Placed today' : 'Last finished · ' + escapeHtml(fmtDate(o.lastFinished.date))} · ${o.lastFinished.rows.length} orphan${o.lastFinished.rows.length===1?'':'s'}</label>
+        <div class="subtle" style="margin-bottom:10px;">Every pull finished today collects here. Copy again if you still need them for Ready.</div>
         ${orphanCopyButtons('data-orph-copy-last')}
+        ${orphanEmailPanel()}
       </div>
     ` : ''}
   `;
@@ -6395,6 +6489,36 @@ function attachOrphanHandlers(){
     orphanCopy(orphanTsv(rows, el.getAttribute('data-orph-copy-last')), rows.length + ' rows copied');
   });
 
+  const skipInput = q('#orph-email-skip');
+  if (skipInput) skipInput.onchange = () => { o.lastFinished.skip = skipInput.value; saveState(); render(); };
+  const biBtn = q('[data-orph-copy-bi]');
+  if (biBtn) biBtn.onclick = () => {
+    const rows = orphanEmailRows();
+    const ids = [...new Set(rows.flatMap(r => [r.orphanId, r.leaderId]))];
+    orphanCopy(ids.join('\n'), ids.length + ' IDs copied for BI');
+  };
+  const contactPaste = q('#orph-contact-paste');
+  if (contactPaste) contactPaste.oninput = () => { orphanContactPaste = contactPaste.value; };
+  const contactsBtn = q('[data-orph-contacts-load]');
+  if (contactsBtn) contactsBtn.onclick = () => {
+    const { rows, missing } = parseSheetPaste(orphanContactPaste, CONTACT_FIELDS);
+    if (missing.length) { orphanError = 'Could not find these columns in the BI header row: ' + missing.join(', ') + '.'; render(); return; }
+    const contacts = o.lastFinished.contacts = o.lastFinished.contacts || {};
+    let n = 0;
+    rows.filter(r => r.id).forEach(r => {
+      const name = [r.first, r.last].filter(Boolean).join(' ') || r.name;
+      contacts[r.id] = { name, email: /@/.test(r.email) ? r.email : '' };
+      n++;
+    });
+    if (!n) { orphanError = 'No contacts found in that paste. Include the header row.'; render(); return; }
+    orphanError = ''; orphanContactPaste = '';
+    saveState(); render(); showToast(n + ' contacts loaded');
+  };
+  all('[data-orph-download]', el => el.onclick = () => {
+    const inbox = el.getAttribute('data-orph-download');
+    orphanDownload(inbox + ' Orphans.csv', orphanCsv(orphanEmailRows().filter(r => r.inbox === inbox)));
+  });
+
   const finishBtn = q('[data-orph-finish]');
   if (finishBtn) finishBtn.onclick = () => {
     const rows = computeOrphanResults();
@@ -6408,9 +6532,14 @@ function attachOrphanHandlers(){
     if (!confirm(msg)) return;
     o.used.ids = [...new Set([...o.used.ids, ...leaderIds])];
     o.pullLog.push({ date: todayKey(), tab: orphanTabToday(), placed: placed.length });
+    // A second pull on the same day joins the first, so the emails go out once.
+    const sameDay = o.lastFinished && o.lastFinished.date === todayKey();
     o.lastFinished = {
       date: todayKey(), tab: orphanTabToday(),
-      rows: placed.map(r => ({ id: r.id, name: r.name, match: r.match, status: r.status, leader: r.leader ? { id: r.leader.id, name: r.leader.name } : null, miles: r.miles, inbox: r.inbox })),
+      rows: [...(sameDay ? o.lastFinished.rows : []),
+        ...placed.map(r => ({ id: r.id, name: r.name, match: r.match, status: r.status, leader: r.leader ? { id: r.leader.id, name: r.leader.name } : null, miles: r.miles, inbox: r.inbox }))],
+      contacts: sameDay ? (o.lastFinished.contacts || {}) : {},
+      skip: sameDay ? (o.lastFinished.skip || '') : '',
     };
     o.batch = { orphans: [], overrides: {}, tabOverride: '' };
     saveState();
