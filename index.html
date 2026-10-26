@@ -5974,7 +5974,7 @@ function parseSheetPaste(text, fields){
 }
 
 const ORPHAN_FIELDS = [
-  { key:'id',      label:'Orphan ID', re:/(^|\b)id$|^id\b|number/i, required:true, prio:5 },
+  { key:'id',      label:'Orphan ID', re:/(^|[\s_])id$|^id\b|^(distributor|member|leader|enroller|orphan|wa|account)[ _]?(number|no\.?|#)$/i, required:true, prio:5 },
   { key:'name',    label:'Name',      re:/name/i, prio:6 },
   { key:'type',    label:'Type',      re:/type/i, prio:1 },
   { key:'city',    label:'City',      re:/city|address.?3/i, prio:2 },
@@ -5985,7 +5985,7 @@ const ORPHAN_FIELDS = [
   { key:'lon',     label:'Lon',       re:/^(lon|lng)/i, prio:1 },
 ];
 const LEADER_FIELDS = [
-  { key:'id',      label:'Leader ID', re:/(^|\b)id$|^id\b|number/i, required:true, prio:5 },
+  { key:'id',      label:'Leader ID', re:/(^|[\s_])id$|^id\b|^(distributor|member|leader|enroller|orphan|wa|account)[ _]?(number|no\.?|#)$/i, required:true, prio:5 },
   { key:'name',    label:'Name',      re:/name/i, prio:6 },
   { key:'country', label:'Country',   re:/country/i, required:true, prio:1 },
   { key:'city',    label:'City',      re:/city|address.?3/i, prio:2 },
@@ -6073,6 +6073,7 @@ function orphanTsv(rows, kind){
   if (kind === 'leaderNames') return rows.map(orphanLeaderNameOf).join('\n');
   if (kind === 'inbox') return rows.map(r => r.inbox).join('\n');
   if (kind === 'country') return rows.map(r => r.match).join('\n');
+  if (kind === 'date') return rows.map(() => new Date().toLocaleDateString('en-US')).join('\n');
   // One block for Ready: orphan ID, leader ID and full country name side by side.
   if (kind === 'ready') return rows.map(r => [r.id, orphanLeaderIdOf(r), r.match, r.inbox].join('\t')).join('\n');
   const head = ['Orphan ID','Orphan Name','Country','Leader ID (enroller)','Leader Name','Distance (miles)','Inbox','Assigned date'];
@@ -6083,7 +6084,7 @@ function orphanTsv(rows, kind){
 
 // ---- mass emails (SOP Phase 7) ----
 const CONTACT_FIELDS = [
-  { key:'id',    label:'ID',    re:/(^|\b)id$|^id\b|number/i, required:true, prio:5 },
+  { key:'id',    label:'ID',    re:/(^|[\s_])id$|^id\b|^(distributor|member|leader|enroller|orphan|wa|account)[ _]?(number|no\.?|#)$/i, required:true, prio:5 },
   { key:'type',  label:'Type',  re:/type/i, prio:1 },
   { key:'first', label:'First name', re:/first/i, prio:2 },
   { key:'last',  label:'Last name',  re:/last|surname/i, prio:2 },
@@ -6281,11 +6282,11 @@ function viewOrphans(){
       <label class="section">1. Paste orphans</label>
       ${o.batch.orphans.length ? `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-          <div class="subtle">${o.batch.orphans.length} orphan${o.batch.orphans.length===1?'':'s'} loaded${o.batch.loadedAt ? ' at ' + escapeHtml(o.batch.loadedAt) : ''}.${o.batch.dropped ? ` Removed automatically (they place their own): ${escapeHtml(o.batch.dropped)}.` : ''}</div>
+          <div class="subtle">${o.batch.orphans.length} orphan${o.batch.orphans.length===1?'':'s'} loaded${o.batch.loadedAt ? ' at ' + escapeHtml(o.batch.loadedAt) : ''}.${o.batch.dropped ? ` Removed automatically: ${escapeHtml(o.batch.dropped)}.` : ''}</div>
           <button data-orph-clear class="btn btn-ghost" style="padding:7px 12px;">${icon('trash',14)} Clear and paste new</button>
         </div>
       ` : `
-        <div class="hint" style="margin:0 0 8px;">From the BI Distributor List (after the Tableau date filter), copy the rows including the header row: ID, Name, Type, City, State, Country, Postal code. Australia, China, India, Japan, Korea and New Zealand are removed automatically; test accounts and retail customers are flagged.</div>
+        <div class="hint" style="margin:0 0 8px;">From the BI Distributor List (after the Tableau date filter), copy the rows including the header row: ID, Name, Type, City, State, Country, Postal code. Test accounts and Australia, China, India, Japan, Korea and New Zealand are removed automatically; retail customers are split out.</div>
         <textarea id="orph-paste" rows="5" placeholder="Paste from Excel here">${escapeHtml(orphanPaste)}</textarea>
         <div style="margin-top:8px;"><button data-orph-load class="btn btn-primary" style="padding:8px 14px;">Load orphans</button></div>
       `}
@@ -6335,7 +6336,7 @@ function viewOrphans(){
           </table>
         </div>
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
-          <div class="subtle" style="max-width:520px;">When the IDs are in Ready, finish the pull. This logs it (so the next pull flips to ${tab === '50-499' ? '500+' : '50-499'}) and marks ${placed.filter(r=>r.leader).length} leader${placed.filter(r=>r.leader).length===1?'':'s'} as used for ${monthLabel(monthKey()).split(' ')[0]}. Their IDs are copied for Count &amp; Location.</div>
+          <div class="subtle" style="max-width:520px;">When the IDs are in Ready, finish the pull. This logs it (so the next pull flips to ${tab === '50-499' ? '500+' : '50-499'}) and marks ${placed.filter(r=>r.leader).length} leader${placed.filter(r=>r.leader).length===1?'':'s'} as used for ${monthLabel(monthKey()).split(' ')[0]}. Their IDs, with the month beside them, are copied for Count &amp; Location column F.</div>
           <button data-orph-finish class="btn btn-primary" style="padding:9px 16px;" ${tab ? '' : 'disabled'}>Finish pull</button>
         </div>
       </div>
@@ -6353,7 +6354,7 @@ function viewOrphans(){
 }
 
 function orphanCopyButtons(attr){
-  const btns = [['orphanIds','Orphan IDs'], ['leaderIds','Leader IDs'], ['leaderNames','Leader names'], ['inbox','Inboxes'], ['country','Countries'], ['table','Whole table']];
+  const btns = [['orphanIds','Orphan IDs'], ['leaderIds','Leader IDs'], ['leaderNames','Leader names'], ['inbox','Inboxes'], ['country','Countries'], ['date','Assigned dates'], ['table','Whole table']];
   return `<div style="display:flex; gap:6px; flex-wrap:wrap;">
     <button ${attr}="ready" class="btn btn-primary" style="padding:6px 12px; font-size:13px;" title="Orphan ID, Leader ID, Country and Inbox, side by side">${icon('copy',13)} Copy IDs, countries + inboxes</button>
     ${btns.map(([k, l]) =>
@@ -6476,10 +6477,16 @@ function attachOrphanHandlers(){
     const list = rows.filter(r => r.id);
     if (!list.length) { orphanError = 'Nothing to load. Copy the rows from Excel, including the header row.'; render(); return; }
     orphanError = '';
-    // Those markets place their own orphans, so they never reach the list.
+    // Those markets place their own orphans and test accounts are deleted
+    // (SOP Phase 2 step 5, Phase 3 step 2), so neither reaches the list.
+    const isTest = r => /\btest\b/i.test(r.name);
     const dropped = list.filter(r => orphanSelfPlacing(r.country));
-    o.batch.orphans = list.filter(r => !orphanSelfPlacing(r.country));
-    o.batch.dropped = dropped.length ? [...new Set(dropped.map(r => orphanCountry(r.country).match))].map(c => `${dropped.filter(r => orphanCountry(r.country).match === c).length} ${c}`).join(', ') : '';
+    const tests = list.filter(r => !orphanSelfPlacing(r.country) && isTest(r));
+    o.batch.orphans = list.filter(r => !orphanSelfPlacing(r.country) && !isTest(r));
+    o.batch.dropped = [
+      ...[...new Set(dropped.map(r => orphanCountry(r.country).match))].map(c => `${dropped.filter(r => orphanCountry(r.country).match === c).length} ${c}`),
+      ...(tests.length ? [`${tests.length} test account${tests.length===1?'':'s'} (${tests.map(r => r.id).join(', ')})`] : []),
+    ].join(', ');
     o.batch.overrides = {};
     o.batch.inboxes = {};
     o.batch.loadedAt = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
@@ -6603,7 +6610,8 @@ function attachOrphanHandlers(){
     o.batch = { orphans: [], overrides: {}, inboxes: {}, tabOverride: '' };
     saveState();
     render();
-    orphanCopy(leaderIds.join('\n'), 'Pull finished — leader IDs copied for Count & Location');
+    const month = new Date().toLocaleString('en-US', { month:'long' });
+    orphanCopy(leaderIds.map(id => id + '\t' + month).join('\n'), 'Pull finished — leader IDs and month copied for Count & Location');
   };
 
   all('[data-orph-leader-paste]', el => el.oninput = () => { orphanLeaderPaste[el.getAttribute('data-orph-leader-paste')] = el.value; });
