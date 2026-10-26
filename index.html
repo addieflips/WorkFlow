@@ -5918,10 +5918,50 @@ function orphanCoords(row, match){
   return null;
 }
 
+// Lookup keys for a leader: city first, postal code for zip-code countries.
+// l = [id, name, match, city, lat, lon, count, tab, postal]
+function orphanLeaderKeys(l){
+  const m = orphanNorm(l[2]);
+  const cityKey = l[3] ? orphanNorm(l[3]) + '|' + m : '';
+  const zipKey = l[8] ? 'zip:' + orphanNorm(l[8]) + '|' + m : '';
+  return (ORPHAN_ZIP_COUNTRIES.includes(l[2]) ? [zipKey, cityKey] : [cityKey, zipKey]).filter(Boolean);
+}
+
+// Median position of each country's leaders, to catch coordinates that were
+// typed wrong (e.g. a Brazilian leader with a Californian lat/lon).
+const __orphanMedians = new WeakMap();
+function orphanCountryMedians(){
+  const leaders = orphanData().leaders;
+  let cached = __orphanMedians.get(leaders);
+  if (cached && cached.n === leaders.length) return cached.map;
+  const pts = new Map();
+  leaders.forEach(l => {
+    const lat = orphanNum(l[4]), lon = orphanNum(l[5]);
+    if (isNaN(lat) || isNaN(lon)) return;
+    if (!pts.has(l[2])) pts.set(l[2], []);
+    pts.get(l[2]).push([lat, lon]);
+  });
+  const med = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  const map = new Map();
+  pts.forEach((a, c) => { if (a.length >= 5) map.set(c, [med(a.map(p => p[0])), med(a.map(p => p[1]))]); });
+  __orphanMedians.set(leaders, { n: leaders.length, map });
+  return map;
+}
+
+function orphanLeaderSuspect(l){
+  const lat = orphanNum(l[4]), lon = orphanNum(l[5]);
+  if (isNaN(lat) || isNaN(lon)) return false;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return true;
+  const mid = orphanCountryMedians().get(l[2]);
+  return !!mid && haversineMiles([lat, lon], mid) > 2500;
+}
+
 function orphanLeaderCoords(l){
   const lat = orphanNum(l[4]), lon = orphanNum(l[5]);
-  if (!isNaN(lat) && !isNaN(lon)) return [lat, lon];
-  return l[3] ? orphanPlace(orphanNorm(l[3]) + '|' + orphanNorm(l[2])) : null;
+  if (!isNaN(lat) && !isNaN(lon) && !orphanLeaderSuspect(l)) return [lat, lon];
+  // Missing or suspect: only a looked-up location will do.
+  for (const k of orphanLeaderKeys(l)) { const hit = orphanPlace(k); if (hit) return hit; }
+  return null;
 }
 
 function orphanLastPull(){
@@ -5994,6 +6034,22 @@ const LEADER_FIELDS = [
   { key:'count',   label:'Count',     re:/count/i, prio:1 },
 ];
 
+// The BI leader list as it is pasted: no header row,
+// ID | address 1 | address 2 | address 3 | - | city | state | postal | country code | full address | - | lat | lon | PGB.
+// EO/GAC rows keep the real country in address 3 (e.g. "Austria"); Russia and
+// other postal-code countries keep the postal code there.
+function parseBiLeaderList(text){
+  const lines = String(text||'').replace(/\r/g,'').split('\n').filter(l => l.trim());
+  const rows = lines.map(l => l.split('\t').map(c => c.trim()));
+  if (!rows.length || !rows.every(c => c.length >= 13 && /^\d+$/.test(c[0]) && /^[A-Za-z]{2,3}$/.test(c[8]))) return null;
+  return rows.map(c => {
+    let country = c[8];
+    if (orphanCountry(country).match === 'CHECK COUNTRY' && c[3] && !/\d/.test(c[3])) country = c[3];
+    const postal = c[7] || (/^[A-Z0-9-]{3,8}$/i.test(c[3]) ? c[3] : '');
+    return { id: c[0], name: '', country, city: c[5], lat: c[11], lon: c[12], count: 0, postal };
+  });
+}
+
 function orphanEligibleLeaders(){
   const o = orphanData(), tab = orphanTabToday();
   const used = new Set(o.used.ids.map(String));
@@ -6003,7 +6059,7 @@ function orphanEligibleLeaders(){
     const coords = orphanLeaderCoords(l);
     if (!coords) return;
     if (!byCountry.has(l[2])) byCountry.set(l[2], []);
-    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', coords });
+    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', city: l[3] || '', postal: l[8] || '', coords });
   });
   return byCountry;
 }
@@ -6200,8 +6256,10 @@ function orphanLookupJobs(rows){
   const o = orphanData(), tab = orphanTabToday();
   const countries = new Set(rows.map(r => r.match));
   o.leaders.forEach(l => {
-    if (l[7] !== tab || !countries.has(l[2]) || !l[3] || orphanLeaderCoords(l)) return;
-    jobs.set(orphanNorm(l[3]) + '|' + orphanNorm(l[2]), { city: l[3], country: l[2] });
+    if (l[7] !== tab || !countries.has(l[2]) || orphanLeaderCoords(l)) return;
+    const key = orphanLeaderKeys(l)[0];
+    if (!key) return;
+    jobs.set(key, key.startsWith('zip:') ? { postalcode: l[8], country: l[2] } : { city: l[3], country: l[2] });
   });
   return [...jobs.entries()];
 }
@@ -6246,6 +6304,7 @@ function viewOrphans(){
   const placed = orphanPlaced(rows);
   const count = s => rows.filter(r => r.status === s).length;
   const eligible = [...orphanEligibleLeaders().values()].reduce((n, a) => n + a.length, 0);
+  const geoJobs = rows.length ? orphanLookupJobs(rows).length : 0;
   const leaderCount = t => o.leaders.filter(l => l[7] === t).length;
   const fmtDate = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'numeric', day:'numeric' }) : '';
 
@@ -6303,11 +6362,11 @@ function viewOrphans(){
           ${orphanStat('Remove / fix', count('test') + count('selfplace') + count('checkcountry'), 'warn')}
           ${orphanStat('Missing inbox', placed.filter(r => r.status==='ready' && !r.inbox).length, 'warn')}
         </div>
-        ${count('needcoords') || orphanGeo ? `
+        ${geoJobs || orphanGeo ? `
           <div class="orph-geo">
             ${orphanGeo
               ? `Looking up locations… ${orphanGeo.done} of ${orphanGeo.total}`
-              : `<span>${count('needcoords')} orphan${count('needcoords')===1?'':'s'} need a location.</span> <button data-orph-geo class="btn btn-primary" style="padding:6px 12px;">${icon('globe',14)} Look up locations</button>`}
+              : `<span>${geoJobs} place${geoJobs===1?'':'s'} need a location (${count('needcoords')} orphan${count('needcoords')===1?'':'s'}; the rest are leaders in today's countries with no or wrong lat/lon). Takes about a second each, and each place is remembered.</span> <button data-orph-geo class="btn btn-primary" style="padding:6px 12px;">${icon('globe',14)} Look up locations</button>`}
           </div>` : ''}
       </div>
 
@@ -6369,7 +6428,7 @@ function orphanRow(r){
     leaderCell = r.options.length ? `
       <select data-orph-pick="${escapeAttr(r.id)}" class="orph-pick">
         ${r.leader ? '' : '<option value="">Pick a leader (takes them from another orphan)</option>'}
-        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name)} (${x.miles} mi)${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
+        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)} (${x.miles} mi)${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
       </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}` : '—';
   } else if (r.status === 'needcoords') {
     leaderCell = `<span class="orph-ll"><input data-orph-lat="${escapeAttr(r.id)}" placeholder="Lat" /><input data-orph-lon="${escapeAttr(r.id)}" placeholder="Lon" /><button data-orph-ll="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
@@ -6395,16 +6454,17 @@ function orphanSetupPanel(){
   const o = orphanData();
   const n = t => o.leaders.filter(l => l[7] === t).length;
   const missing = t => o.leaders.filter(l => l[7] === t && !orphanLeaderCoords(l)).length;
+  const suspect = t => o.leaders.filter(l => l[7] === t && orphanLeaderSuspect(l)).length;
   const countryText = orphanCountryPaste !== null ? orphanCountryPaste : o.countryExtra.map(r => r.join(', ')).join('\n');
   return `
     <div class="card" style="margin-bottom:16px;">
       <label class="section">Monthly setup</label>
-      <div class="hint" style="margin:0 0 12px;">Once a month, when the new leader list comes out, paste each tab with its header row (Leader ID, Name, Country, City, Lat, Lon, Count). Pasting a tab replaces that tab only. The used-this-month list starts over by itself on the 1st.</div>
+      <div class="hint" style="margin:0 0 12px;">Once a month, when the new leader list comes out, copy each tab straight from the leader list (all rows, no header needed) and paste it in its box. Pasting a tab replaces that tab only. Leaders without a lat/lon, or with one outside their country, are looked up when an orphan in their country needs them. The used-this-month list starts over by itself on the 1st.</div>
       <div class="two-col">
         ${ORPHAN_TABS.map(t => `
           <div>
             <div style="font-weight:600; font-size:14px; margin-bottom:4px;">${t} PGB tab</div>
-            <div class="subtle" style="font-size:12.5px; margin-bottom:6px;">${n(t)} leaders${o.leadersUpdated[t] ? ' · pasted ' + escapeHtml(o.leadersUpdated[t]) : ''}${missing(t) ? ` · <span style="color:#B4690E;">${missing(t)} missing lat/lon</span>` : ''}</div>
+            <div class="subtle" style="font-size:12.5px; margin-bottom:6px;">${n(t)} leaders${o.leadersUpdated[t] ? ' · pasted ' + escapeHtml(o.leadersUpdated[t]) : ''}${missing(t) ? ` · <span style="color:#B4690E;">${missing(t)} need a location looked up${suspect(t) ? ` (${suspect(t)} had a lat/lon outside their country)` : ''}</span>` : ''}</div>
             <textarea data-orph-leader-paste="${t}" rows="4" placeholder="Paste the ${t} tab here">${escapeHtml(orphanLeaderPaste[t])}</textarea>
             <button data-orph-leader-load="${t}" class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Replace ${t} leaders</button>
           </div>`).join('')}
@@ -6617,9 +6677,13 @@ function attachOrphanHandlers(){
   all('[data-orph-leader-paste]', el => el.oninput = () => { orphanLeaderPaste[el.getAttribute('data-orph-leader-paste')] = el.value; });
   all('[data-orph-leader-load]', el => el.onclick = () => {
     const tab = el.getAttribute('data-orph-leader-load');
-    const { rows, missing } = parseSheetPaste(orphanLeaderPaste[tab], LEADER_FIELDS);
-    if (missing.length) { orphanError = 'Could not find these leader columns in the header row: ' + missing.join(', ') + '.'; render(); return; }
-    const list = rows.filter(r => r.id).map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, Number(r.count) || 0, tab]);
+    let rows = parseBiLeaderList(orphanLeaderPaste[tab]);
+    if (!rows) {
+      const parsed = parseSheetPaste(orphanLeaderPaste[tab], LEADER_FIELDS);
+      if (parsed.missing.length) { orphanError = 'Could not read that leader list. Paste it straight from the leader list, or include a header row with: ' + parsed.missing.join(', ') + '.'; render(); return; }
+      rows = parsed.rows;
+    }
+    const list = rows.filter(r => r.id).map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, Number(r.count) || 0, tab, r.postal || '']);
     if (!list.length) { orphanError = 'No leaders found in that paste. Include the header row.'; render(); return; }
     if (!confirm(`Replace the ${tab} tab with ${list.length} leaders?`)) return;
     orphanError = '';
