@@ -5845,6 +5845,21 @@ let orphanError = '';
 let orphanLocOpen = false;       // Leader locations panel
 let orphanLocCountry = '';       // country shown in detail
 let orphanLocAll = false;        // show every leader, not just problems
+// What's typed in the small lat/lon and postal boxes. The page re-renders
+// often (every second during a Check), which would otherwise wipe a box
+// as soon as the cursor moves to the next one.
+let orphanDrafts = {};
+function orphanDraft(key, fallback){
+  const v = orphanDrafts[key] !== undefined ? orphanDrafts[key] : (fallback || '');
+  return `data-orph-draft="${escapeAttr(key)}" value="${escapeAttr(v)}"`;
+}
+// Accepts the two boxes, or "lat, lon" pasted into the first one (as Google Maps copies it).
+function orphanReadLatLon(latText, lonText){
+  let a = String(latText || '').trim(), b = String(lonText || '').trim();
+  if (!b) { const m = a.match(/^(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)$/); if (m) { a = m[1]; b = m[2]; } }
+  const lat = orphanNum(a), lon = orphanNum(b);
+  return isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180 ? null : [lat, lon];
+}
 
 function monthKey(){ return todayKey().slice(0,7); }
 function monthLabel(key){
@@ -6607,9 +6622,9 @@ function orphanRow(r){
         ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)} (${x.miles != null ? x.miles + ' mi' : 'zip ' + escapeHtml(x.l.postal)})${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
       </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}` : '—';
   } else if (r.status === 'needzip') {
-    leaderCell = `<span class="orph-ll"><input data-orph-zip="${escapeAttr(r.id)}" placeholder="Postal code" style="width:110px;" /><button data-orph-zip-save="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
+    leaderCell = `<span class="orph-ll"><input data-orph-zip="${escapeAttr(r.id)}" ${orphanDraft('ozip:' + r.id)} placeholder="Postal code" style="width:110px;" /><button data-orph-zip-save="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
   } else if (r.status === 'needcoords') {
-    leaderCell = `<span class="orph-ll"><input data-orph-lat="${escapeAttr(r.id)}" placeholder="Lat" /><input data-orph-lon="${escapeAttr(r.id)}" placeholder="Lon" /><button data-orph-ll="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
+    leaderCell = `<span class="orph-ll"><input data-orph-lat="${escapeAttr(r.id)}" ${orphanDraft('olat:' + r.id)} placeholder="Lat" /><input data-orph-lon="${escapeAttr(r.id)}" ${orphanDraft('olon:' + r.id)} placeholder="Lon" /><button data-orph-ll="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
   }
   const where = [r.city, r.state].filter(Boolean).join(', ') || r.postal || '';
   return `
@@ -6707,11 +6722,11 @@ function orphanLocationsDetail(country){
             const id = escapeAttr(l[0]);
             const fix = o.leaderFix[l[0]];
             const fixCell = zipC ? `
-              <span class="orph-ll"><input data-orph-fix-zip="${id}" placeholder="Postal code" value="${escapeAttr((fix && fix.zip) || '')}" style="width:100px;" /><button data-orph-fix-zip-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button>${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}</span>` : `
+              <span class="orph-ll"><input data-orph-fix-zip="${id}" ${orphanDraft('fzip:' + l[0], (fix && fix.zip) || '')} placeholder="Postal code" style="width:100px;" /><button data-orph-fix-zip-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button>${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}</span>` : `
               <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
                 ${loc.checked && loc.status !== 'fixed' ? `<button data-orph-fix-use="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Use looked-up</button>` : ''}
                 ${loc.list && loc.status !== 'kept' && loc.status !== 'ok' ? `<button data-orph-fix-keep="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Keep list's</button>` : ''}
-                <span class="orph-ll"><input data-orph-fix-lat="${id}" placeholder="Lat" /><input data-orph-fix-lon="${id}" placeholder="Lon" /><button data-orph-fix-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>
+                <span class="orph-ll"><input data-orph-fix-lat="${id}" ${orphanDraft('flat:' + l[0])} placeholder="Lat or lat, lon" /><input data-orph-fix-lon="${id}" ${orphanDraft('flon:' + l[0])} placeholder="Lon" /><button data-orph-fix-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>
                 ${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}
               </div>`;
             return `<tr class="orph-${st.tone === 'ok' ? '' : st.tone}">
@@ -6903,11 +6918,13 @@ function attachOrphanHandlers(){
     saveState(); render();
   });
 
+  all('[data-orph-draft]', el => el.oninput = () => { orphanDrafts[el.getAttribute('data-orph-draft')] = el.value; });
   all('[data-orph-ll]', el => el.onclick = () => {
     const id = el.getAttribute('data-orph-ll');
-    const lat = orphanNum(q(`[data-orph-lat="${CSS.escape(id)}"]`).value);
-    const lon = orphanNum(q(`[data-orph-lon="${CSS.escape(id)}"]`).value);
-    if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
+    const ll = orphanReadLatLon(q(`[data-orph-lat="${CSS.escape(id)}"]`).value, q(`[data-orph-lon="${CSS.escape(id)}"]`).value);
+    if (!ll) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
+    const [lat, lon] = ll;
+    delete orphanDrafts['olat:' + id]; delete orphanDrafts['olon:' + id];
     const row = o.batch.orphans.find(r => r.id === id);
     if (!row) return;
     // Saved to the place list so the same city never needs looking up again.
@@ -6995,18 +7012,19 @@ function attachOrphanHandlers(){
     if (loc && loc.checked) { o.leaderFix[l[0]] = loc.checked; saveState(); render(); }
   });
   all('[data-orph-fix-keep]', el => el.onclick = () => { o.leaderFix[el.getAttribute('data-orph-fix-keep')] = 'list'; saveState(); render(); });
-  all('[data-orph-fix-reset]', el => el.onclick = () => { delete o.leaderFix[el.getAttribute('data-orph-fix-reset')]; saveState(); render(); });
+  all('[data-orph-fix-reset]', el => el.onclick = () => { const id = el.getAttribute('data-orph-fix-reset'); delete o.leaderFix[id]; delete orphanDrafts['fzip:' + id]; saveState(); render(); });
   all('[data-orph-fix-save]', el => el.onclick = () => {
     const id = el.getAttribute('data-orph-fix-save');
-    const lat = orphanNum(q(`[data-orph-fix-lat="${CSS.escape(id)}"]`).value);
-    const lon = orphanNum(q(`[data-orph-fix-lon="${CSS.escape(id)}"]`).value);
-    if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
-    o.leaderFix[id] = [lat, lon]; saveState(); render(); showToast('Location saved for ' + id);
+    const ll = orphanReadLatLon(q(`[data-orph-fix-lat="${CSS.escape(id)}"]`).value, q(`[data-orph-fix-lon="${CSS.escape(id)}"]`).value);
+    if (!ll) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
+    delete orphanDrafts['flat:' + id]; delete orphanDrafts['flon:' + id];
+    o.leaderFix[id] = ll; saveState(); render(); showToast('Location saved for ' + id);
   });
   all('[data-orph-fix-zip-save]', el => el.onclick = () => {
     const id = el.getAttribute('data-orph-fix-zip-save');
     const zip = orphanZip(q(`[data-orph-fix-zip="${CSS.escape(id)}"]`).value);
     if (!zip) { showToast('Enter a postal code'); return; }
+    delete orphanDrafts['fzip:' + id];
     o.leaderFix[id] = { zip }; saveState(); render(); showToast('Postal code saved for ' + id);
   });
   all('[data-orph-zip-save]', el => el.onclick = () => {
@@ -7014,6 +7032,7 @@ function attachOrphanHandlers(){
     const zip = orphanZip(q(`[data-orph-zip="${CSS.escape(id)}"]`).value);
     const row = o.batch.orphans.find(r => r.id === id);
     if (!zip || !row) { showToast('Enter a postal code'); return; }
+    delete orphanDrafts['ozip:' + id];
     row.postal = zip; saveState(); render();
   });
 
