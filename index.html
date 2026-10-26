@@ -6060,10 +6060,12 @@ function parseSheetPaste(text, fields){
     const cells = l.split('\t');
     const r = {};
     fields.forEach(f => r[f.key] = map[f.key] === undefined ? '' : String(cells[map[f.key]] || '').trim());
+    Object.defineProperty(r, 'cells', { value: cells.map(c => c.trim()), enumerable: false });
     return r;
   });
   const missing = fields.filter(f => f.required && map[f.key] === undefined).map(f => f.label);
-  return { rows, missing };
+  const columns = isHeader ? fields.filter(f => map[f.key] !== undefined).map(f => `${f.label} ← ${first[map[f.key]]}`).join(', ') : '';
+  return { rows, missing, columns };
 }
 
 const ORPHAN_FIELDS = [
@@ -6094,6 +6096,7 @@ const LEADER_FIELDS = [
 function parseBiLeaderList(text){
   const lines = String(text||'').replace(/\r/g,'').split('\n').filter(l => l.trim());
   const rows = lines.map(l => l.split('\t').map(c => c.trim()));
+  while (rows.length && !/^\d+$/.test(rows[0][0])) rows.shift();
   if (!rows.length || !rows.every(c => c.length >= 13 && /^\d+$/.test(c[0]) && /^[A-Za-z]{2,3}$/.test(c[8]))) return null;
   return rows.map(c => {
     let country = c[8];
@@ -6101,6 +6104,38 @@ function parseBiLeaderList(text){
     const postal = c[7] || (/^[A-Z0-9-]{3,8}$/i.test(c[3]) ? c[3] : '');
     return { id: c[0], name: '', country, city: c[5], lat: c[11], lon: c[12], count: 0, postal };
   });
+}
+
+// Excel files are read in the browser with SheetJS, loaded on first use.
+let __xlsxLoading = null;
+function orphanLoadXlsx(){
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!__xlsxLoading) __xlsxLoading = new Promise((resolve, reject) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = () => resolve(window.XLSX);
+    sc.onerror = () => { __xlsxLoading = null; reject(new Error('Could not load the Excel reader. Check your connection, or copy and paste instead.')); };
+    document.head.appendChild(sc);
+  });
+  return __xlsxLoading;
+}
+
+// { sheetName: tab-separated text } for every sheet in the file.
+async function orphanReadWorkbook(file){
+  const buf = await file.arrayBuffer();
+  if (/\.(csv|txt|tsv)$/i.test(file.name)) {
+    const text = new TextDecoder().decode(buf);
+    const sep = /\.tsv$/i.test(file.name) || text.split('\n')[0].includes('\t') ? '\t' : ',';
+    if (sep === '\t') return { [file.name]: text };
+  }
+  const XLSX = await orphanLoadXlsx();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const out = {};
+  wb.SheetNames.forEach(n => {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' });
+    out[n] = rows.map(r => r.map(c => String(c).replace(/[\t\r\n]+/g, ' ')).join('\t')).join('\n');
+  });
+  return out;
 }
 
 function orphanEligibleLeaders(){
@@ -6443,13 +6478,18 @@ function viewOrphans(){
       <label class="section">1. Paste orphans</label>
       ${o.batch.orphans.length ? `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-          <div class="subtle">${o.batch.orphans.length} orphan${o.batch.orphans.length===1?'':'s'} loaded${o.batch.loadedAt ? ' at ' + escapeHtml(o.batch.loadedAt) : ''}.${o.batch.dropped ? ` Removed automatically: ${escapeHtml(o.batch.dropped)}.` : ''}</div>
+          <div class="subtle">${o.batch.orphans.length} orphan${o.batch.orphans.length===1?'':'s'} loaded${o.batch.source ? ' from ' + escapeHtml(o.batch.source) : ''}${o.batch.loadedAt ? ' at ' + escapeHtml(o.batch.loadedAt) : ''}.${o.batch.dropped ? ` Removed automatically: ${escapeHtml(o.batch.dropped)}.` : ''}</div>
+          ${o.batch.columns ? `<div class="hint" style="flex-basis:100%; margin:0;">Columns read: ${escapeHtml(o.batch.columns)}</div>` : ''}
           <button data-orph-clear class="btn btn-ghost" style="padding:7px 12px;">${icon('trash',14)} Clear and paste new</button>
         </div>
       ` : `
-        <div class="hint" style="margin:0 0 8px;">From the BI Distributor List (after the Tableau date filter), copy the rows including the header row: ID, Name, Type, City, State, Country, Postal code. Test accounts and Australia, China, India, Japan, Korea and New Zealand are removed automatically; retail customers are split out.</div>
+        <div class="hint" style="margin:0 0 8px;">Upload the BI Distributor List download (after the Tableau date filter), or copy its rows including the header row. It needs ID, Name, Type, City, State, Country and Postal code columns. Test accounts and Australia, China, India, Japan, Korea and New Zealand are removed automatically; retail customers are split out.</div>
         <textarea id="orph-paste" rows="5" placeholder="Paste from Excel here">${escapeHtml(orphanPaste)}</textarea>
-        <div style="margin-top:8px;"><button data-orph-load class="btn btn-primary" style="padding:8px 14px;">Load orphans</button></div>
+        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button data-orph-load class="btn btn-primary" style="padding:8px 14px;">Load pasted orphans</button>
+          <span class="subtle" style="font-size:13px;">or</span>
+          <label class="btn btn-ghost" style="padding:8px 14px; cursor:pointer;">${icon('folder',15)} Upload BI Excel file<input type="file" data-orph-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
+        </div>
       `}
     </div>
 
@@ -6663,6 +6703,10 @@ function orphanSetupPanel(){
     <div class="card" style="margin-bottom:16px;">
       <label class="section">Monthly setup</label>
       <div class="hint" style="margin:0 0 12px;">Once a month, when the new leader list comes out, copy each tab straight from the leader list (all rows, no header needed) and paste it in its box. Pasting a tab replaces that tab only. Leaders without a lat/lon, or with one outside their country, are looked up when an orphan in their country needs them. The used-this-month list starts over by itself on the 1st.</div>
+      <div style="margin:0 0 14px;">
+        <label class="btn btn-primary" style="padding:8px 14px; cursor:pointer;">${icon('folder',15)} Upload leader list Excel<input type="file" data-orph-leader-file accept=".xlsx,.xls" style="display:none;" /></label>
+        <span class="subtle" style="font-size:13px; margin-left:8px;">Reads the 50–499 and 500+ tabs in one go, or paste each tab below.</span>
+      </div>
       <div class="two-col">
         ${ORPHAN_TABS.map(t => `
           <div>
@@ -6719,26 +6763,19 @@ function orphanCopy(text, msg){
   else fallback();
 }
 
-function attachOrphanHandlers(){
+// Shared by paste and upload: read the BI orphan rows and start a new batch.
+function orphanLoadOrphans(text, source){
   const o = orphanData();
-  const q = sel => document.querySelector(sel);
-  const all = (sel, fn) => document.querySelectorAll(sel).forEach(fn);
-
-  const setupBtn = q('[data-orph-setup]');
-  if (!setupBtn) return;
-  setupBtn.onclick = () => { orphanSetupOpen = !orphanSetupOpen; render(); };
-
-  const tabSel = q('[data-orph-tab-override]');
-  if (tabSel) tabSel.onchange = () => { o.batch.tabOverride = tabSel.value; o.batch.overrides = {}; saveState(); render(); };
-
-  const paste = q('#orph-paste');
-  if (paste) paste.oninput = () => { orphanPaste = paste.value; };
-  const loadBtn = q('[data-orph-load]');
-  if (loadBtn) loadBtn.onclick = () => {
-    const { rows, missing } = parseSheetPaste(orphanPaste, ORPHAN_FIELDS);
-    if (missing.length) { orphanError = 'Could not find these columns in the header row: ' + missing.join(', ') + '.'; render(); return; }
-    const list = rows.filter(r => r.id);
-    if (!list.length) { orphanError = 'Nothing to load. Copy the rows from Excel, including the header row.'; render(); return; }
+  const { rows, missing, columns } = parseSheetPaste(text, ORPHAN_FIELDS);
+  if (missing.length) { orphanError = 'Could not find these columns in the header row: ' + missing.join(', ') + '.'; render(); return; }
+  const list = rows.filter(r => r.id && /\d/.test(r.id));
+  if (!list.length) { orphanError = 'Nothing to load. Use the BI download with its header row.'; render(); return; }
+  // EO/GAC rows: take the real country from any other column that names one.
+  list.forEach(r => {
+    if (orphanCountry(r.country).match !== 'CHECK COUNTRY') return;
+    const named = (r.cells || []).find(c => c && orphanCountryTable().byName.has(orphanNorm(c)) && orphanCountry(c).match !== 'CHECK COUNTRY');
+    if (named) r.country = named;
+  });
     orphanError = '';
     // Those markets place their own orphans and test accounts are deleted
     // (SOP Phase 2 step 5, Phase 3 step 2), so neither reaches the list.
@@ -6754,7 +6791,63 @@ function attachOrphanHandlers(){
     o.batch.inboxes = {};
     o.batch.loadedAt = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
     orphanPaste = '';
+    o.batch.source = source || '';
+    o.batch.columns = columns || '';
     saveState(); render();
+}
+
+function attachOrphanHandlers(){
+  const o = orphanData();
+  const q = sel => document.querySelector(sel);
+  const all = (sel, fn) => document.querySelectorAll(sel).forEach(fn);
+
+  const setupBtn = q('[data-orph-setup]');
+  if (!setupBtn) return;
+  setupBtn.onclick = () => { orphanSetupOpen = !orphanSetupOpen; render(); };
+
+  const tabSel = q('[data-orph-tab-override]');
+  if (tabSel) tabSel.onchange = () => { o.batch.tabOverride = tabSel.value; o.batch.overrides = {}; saveState(); render(); };
+
+  const paste = q('#orph-paste');
+  if (paste) paste.oninput = () => { orphanPaste = paste.value; };
+  const loadBtn = q('[data-orph-load]');
+  if (loadBtn) loadBtn.onclick = () => orphanLoadOrphans(orphanPaste);
+  const orphFile = q('[data-orph-file]');
+  if (orphFile) orphFile.onchange = async () => {
+    const file = orphFile.files[0];
+    if (!file) return;
+    try {
+      const sheets = await orphanReadWorkbook(file);
+      // The sheet with the most rows holds the data.
+      const text = Object.values(sheets).sort((x, y) => y.split('\n').length - x.split('\n').length)[0] || '';
+      orphanLoadOrphans(text, file.name);
+    } catch (e) { orphanError = e.message || 'Could not read that file.'; render(); }
+  };
+  const leaderFile = q('[data-orph-leader-file]');
+  if (leaderFile) leaderFile.onchange = async () => {
+    const file = leaderFile.files[0];
+    if (!file) return;
+    try {
+      const sheets = await orphanReadWorkbook(file);
+      // Tabs are named like "50-499 PGB" and "500+ PGB".
+      const tabOf = n => /500\s*(\+|plus)/i.test(n) ? '500+' : /50\s*[-–]\s*499/.test(n) ? '50-499' : '';
+      const found = {};
+      Object.entries(sheets).forEach(([n, text]) => {
+        const t = tabOf(n);
+        const rows = t && parseBiLeaderList(text);
+        if (rows && rows.length) found[t] = rows;
+      });
+      const tabs = Object.keys(found);
+      if (!tabs.length) { orphanError = `No 50–499 or 500+ tab found in ${file.name}. The tab names need to include "50-499" or "500+"; otherwise paste each tab instead.`; render(); return; }
+      if (!confirm(`Replace ${tabs.map(t => `the ${t} tab with ${found[t].length} leaders`).join(' and ')}?`)) return;
+      orphanError = '';
+      tabs.forEach(t => {
+        o.leaders = [...o.leaders.filter(l => l[7] !== t), ...found[t].map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, 0, t, r.postal || ''])];
+        o.leadersUpdated[t] = new Date().toLocaleDateString('en-US');
+      });
+      saveState(); render();
+      showToast('Leaders loaded from ' + file.name);
+    } catch (e) { orphanError = e.message || 'Could not read that file.'; render(); }
   };
   const clearBtn = q('[data-orph-clear]');
   if (clearBtn) clearBtn.onclick = () => {
