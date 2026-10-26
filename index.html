@@ -6659,13 +6659,14 @@ const ORPHAN_LOC_STATUS = {
   fixed:    { label: 'Fixed by you', tone: 'ok' },
   kept:     { label: "Keeping the list's lat/lon", tone: 'ok' },
   zip:      { label: 'Matched by zip code', tone: 'ok' },
-  off:      { label: 'List lat/lon is off — using looked-up', tone: 'warn' },
+  off:      { label: 'Corrected automatically', tone: 'ok' },
   suspect:  { label: 'Lat/lon outside the country — not used', tone: 'bad' },
   missing:  { label: 'No lat/lon — click Check to look it up', tone: 'bad' },
   notfound: { label: 'Not found — type lat/lon', tone: 'bad' },
   nozip:    { label: 'No postal code — not used', tone: 'bad' },
 };
-const ORPHAN_LOC_PROBLEMS = ['off', 'suspect', 'missing', 'notfound', 'nozip'];
+// A looked-up correction is trusted and saved as is, so it isn't a problem.
+const ORPHAN_LOC_PROBLEMS = ['suspect', 'missing', 'notfound', 'nozip'];
 
 function orphanLeaderLocStatus(l){
   if (orphanZipCountry(l[2])) return { status: orphanLeaderPostal(l) ? 'zip' : 'nozip' };
@@ -6689,7 +6690,7 @@ function orphanLocationsPanel(){
   return `
     <div class="card" style="margin-bottom:16px;">
       <label class="section">Leader locations</label>
-      <div class="hint" style="margin:0 0 10px;">Only leaders with a 1 in the leader list's Count column are shown and placed. The leader list's lat/lon is often wrong. <b>Check</b> looks up every leader's city and postal code in a country (about a second each, remembered after that) and flags any list lat/lon more than 50 miles off; the looked-up one is used unless you keep the list's. ${ORPHAN_ZIP_COUNTRIES.join(', ')} match by zip code instead, so they only need a postal code.</div>
+      <div class="hint" style="margin:0 0 10px;">Only leaders with a 1 in the leader list's Count column are shown and placed. The leader list's lat/lon is often wrong. <b>Check</b> looks up every leader's city and postal code in a country (about a second each, remembered after that) and corrects any list lat/lon more than 50 miles off automatically (saved, nothing to click). Only leaders it couldn't place are listed here. ${ORPHAN_ZIP_COUNTRIES.join(', ')} match by zip code instead, so they only need a postal code.</div>
       ${orphanGeo ? `<div class="orph-geo">${escapeHtml(orphanGeo.label)}… ${orphanGeo.done} of ${orphanGeo.total} <button data-orph-geo-stop class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Stop</button></div>` : ''}
       ${!o.leaders.length ? `<div class="subtle">Paste the leader list under Monthly setup first.</div>` : `
       <div class="orph-table-wrap" style="max-height:320px; overflow-y:auto; margin-top:10px;">
@@ -6734,7 +6735,7 @@ function orphanLocationsDetail(country){
             const fixCell = zipC ? `
               <span class="orph-ll"><input data-orph-fix-zip="${id}" ${orphanDraft('fzip:' + l[0], (fix && fix.zip) || '')} placeholder="Postal code" style="width:100px;" /><button data-orph-fix-zip-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button>${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}</span>` : `
               <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
-                ${loc.checked && loc.status !== 'fixed' ? `<button data-orph-fix-use="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Use looked-up</button>` : ''}
+                ${loc.checked && !['fixed', 'off'].includes(loc.status) ? `<button data-orph-fix-use="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Use looked-up</button>` : ''}
                 ${loc.list && loc.status !== 'kept' && loc.status !== 'ok' ? `<button data-orph-fix-keep="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Keep list's</button>` : ''}
                 <span class="orph-ll"><input data-orph-fix-lat="${id}" ${orphanDraft('flat:' + l[0])} placeholder="Lat or lat, lon" /><input data-orph-fix-lon="${id}" ${orphanDraft('flon:' + l[0])} placeholder="Lon" /><button data-orph-fix-save="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>
                 ${fix ? `<button data-orph-fix-reset="${id}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Reset</button>` : ''}
