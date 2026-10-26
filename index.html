@@ -715,7 +715,9 @@ function restoreFocus(sig){
   if (!el) return;
   // What was being typed hasn't been committed to state yet, so it wins.
   if (typeof sig.value === 'string' && el.value !== sig.value) el.value = sig.value;
-  el.focus();
+  // Without preventScroll the browser scrolls the box back into view on every
+  // render, dragging the page down while someone is scrolling up.
+  el.focus({ preventScroll: true });
   if (sig.start !== null) { try { el.setSelectionRange(sig.start, sig.end); } catch(e){} }
 }
 
@@ -733,6 +735,8 @@ function render(){
   const prevSide = document.querySelector('.sidebar');
   const prevSideScroll = prevSide ? prevSide.scrollTop : 0;
   const focusSig = captureFocus();
+  // Scrolling tables inside the page keep their place too.
+  const innerScroll = [...document.querySelectorAll('.orph-table-wrap')].map(el => [el.scrollTop, el.scrollLeft]);
 
   root.innerHTML = `
     <div class="app">
@@ -750,6 +754,10 @@ function render(){
     const side = document.querySelector('.sidebar');
     if (side) side.scrollTop = prevSideScroll;
   }
+
+  document.querySelectorAll('.orph-table-wrap').forEach((el, i) => {
+    if (innerScroll[i]) { el.scrollTop = innerScroll[i][0]; el.scrollLeft = innerScroll[i][1]; }
+  });
 
   attachHandlers();
   restoreFocus(focusSig);
@@ -5849,6 +5857,8 @@ let orphanLocAll = false;        // show every leader, not just problems
 // often (every second during a Check), which would otherwise wipe a box
 // as soon as the cursor moves to the next one.
 let orphanDrafts = {};
+let orphanUsedShow = false;      // list of leaders used this month
+let orphanUsedSearch = '';
 function orphanDraft(key, fallback){
   const v = orphanDrafts[key] !== undefined ? orphanDrafts[key] : (fallback || '');
   return `data-orph-draft="${escapeAttr(key)}" value="${escapeAttr(v)}"`;
@@ -6743,6 +6753,34 @@ function orphanLocationsDetail(country){
     </div>`;
 }
 
+function orphanUsedList(){
+  const o = orphanData();
+  const byId = new Map(o.leaders.map(l => [String(l[0]), l]));
+  const q = orphanUsedSearch.trim().toLowerCase();
+  // Newest first: finished pulls append to the end.
+  const rows = o.used.ids.slice().reverse().map(id => ({ id, l: byId.get(String(id)) }))
+    .filter(x => !q || [x.id, x.l && x.l[2], x.l && x.l[3], x.l && x.l[8]].some(v => String(v || '').toLowerCase().includes(q)));
+  const cap = 500;
+  return `
+    <div style="margin-top:10px;">
+      <input id="orph-used-search" placeholder="Search by ID, country or city" value="${escapeAttr(orphanUsedSearch)}" style="max-width:320px; margin-bottom:8px;" />
+      <div class="orph-table-wrap" style="max-height:360px; overflow-y:auto;">
+        <table class="orph-table">
+          <thead><tr><th>Leader</th><th>Country</th><th>City / postal</th><th>Tab</th><th></th></tr></thead>
+          <tbody>${rows.slice(0, cap).map(({ id, l }) => `
+            <tr>
+              <td style="font-weight:600;">${escapeHtml(id)}</td>
+              <td>${l ? escapeHtml(l[2]) : '<span class="subtle">Not on the leader list</span>'}</td>
+              <td>${l ? escapeHtml(l[3] || '—') + `<div class="subtle" style="font-size:12px;">${escapeHtml(l[8] || '')}</div>` : ''}</td>
+              <td>${l ? escapeHtml(l[7]) : ''}</td>
+              <td><button data-orph-used-remove="${escapeAttr(id)}" class="icon-btn danger" style="width:26px; height:26px;" title="Remove from this month's list (they can get an orphan again)">${icon('trash',13)}</button></td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="hint">${rows.length === o.used.ids.length ? `${rows.length} leaders, newest first.` : `${rows.length} of ${o.used.ids.length} match.`}${rows.length > cap ? ` Showing the first ${cap}.` : ''}</div>
+    </div>`;
+}
+
 function orphanSetupPanel(){
   const o = orphanData();
   const n = t => o.leaders.filter(l => l[7] === t).length;
@@ -6774,8 +6812,12 @@ function orphanSetupPanel(){
         <textarea id="orph-used-paste" rows="2" placeholder="Leader IDs, one per line">${escapeHtml(orphanUsedPaste)}</textarea>
         <div style="display:flex; gap:6px; margin-top:6px;">
           <button data-orph-used-add class="btn btn-ghost" style="padding:7px 12px;">Add IDs</button>
-          ${o.used.ids.length ? `<button data-orph-used-clear class="btn btn-ghost" style="padding:7px 12px;">Clear list</button>` : ''}
+          ${o.used.ids.length ? `
+            <button data-orph-used-show class="btn btn-ghost" style="padding:7px 12px;">${orphanUsedShow ? 'Hide list' : 'Show list'}</button>
+            <button data-orph-used-copy class="btn btn-ghost" style="padding:7px 12px;">${icon('copy',13)} Copy IDs</button>
+            <button data-orph-used-clear class="btn btn-ghost" style="padding:7px 12px;">Clear list</button>` : ''}
         </div>
+        ${orphanUsedShow && o.used.ids.length ? orphanUsedList() : ''}
       </div>
 
       <div class="role-block">
@@ -7094,6 +7136,18 @@ function attachOrphanHandlers(){
     orphanUsedPaste = '';
     saveState(); render();
   };
+  const usedShow = q('[data-orph-used-show]');
+  if (usedShow) usedShow.onclick = () => { orphanUsedShow = !orphanUsedShow; render(); };
+  const usedCopy = q('[data-orph-used-copy]');
+  if (usedCopy) usedCopy.onclick = () => orphanCopy(o.used.ids.join('\n'), o.used.ids.length + ' IDs copied');
+  const usedSearch = q('#orph-used-search');
+  if (usedSearch) usedSearch.oninput = () => { orphanUsedSearch = usedSearch.value; render(); };
+  all('[data-orph-used-remove]', el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-used-remove');
+    if (!confirm(`Remove ${id} from ${monthLabel(o.used.month)}? They can get an orphan again this month.`)) return;
+    o.used.ids = o.used.ids.filter(x => String(x) !== id);
+    saveState(); render(); showToast(id + ' removed');
+  });
   const usedClear = q('[data-orph-used-clear]');
   if (usedClear) usedClear.onclick = () => {
     if (!confirm('Clear the used-this-month list? Every leader becomes eligible again.')) return;
