@@ -148,6 +148,26 @@
      scroll away with the page. */
   @media (max-width: 600px){ .app{ flex-direction:column; height:auto; } .sidebar{ width:100%; flex-direction:row; flex-wrap:wrap; } .nav-bottom{ margin-top:0; border-top:none; } }
 
+
+  /* orphan placement */
+  .orph-stats{ display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:14px; }
+  .orph-stat-val{ font-size:22px; font-weight:700; line-height:1.2; }
+  .orph-stat-lbl{ font-size:12.5px; color:var(--muted); font-weight:600; margin-top:2px; }
+  .orph-alert{ margin-bottom:16px; background:#FDECEA; border-color:#F5C6C1; color:#9E2B22; font-size:13.5px; padding:12px 16px; }
+  .orph-geo{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:14px; padding:10px 12px; border-radius:10px; background:#FDF4E1; color:#8A5A0B; font-size:13.5px; }
+  .orph-table-wrap{ overflow-x:auto; margin:0 -4px; }
+  .orph-table{ width:100%; border-collapse:collapse; font-size:13px; }
+  .orph-table th{ text-align:left; font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; padding:6px 6px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .orph-table td{ padding:8px 6px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .orph-table tr.orph-bad td{ background:#FDF1F0; }
+  .orph-table tr.orph-warn td{ background:#FEF9EE; }
+  .orph-pick{ width:auto; max-width:300px; padding:4px 8px; font-size:12.5px; }
+  .orph-ll{ display:inline-flex; gap:4px; align-items:center; }
+  .orph-ll input{ width:80px; padding:4px 7px; font-size:12.5px; }
+  .orph-pill{ font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px; white-space:nowrap; background:var(--border); color:var(--muted); }
+  .orph-pill-ok{ background:#E6F4EA; color:#1E7B3A; }
+  .orph-pill-warn{ background:#FDF4E1; color:#8A5A0B; }
+  .orph-pill-bad{ background:#FDECEA; color:#B0352B; }
   .toast{ position:fixed; top:18px; right:18px; background:var(--ink); color:#fff; padding:9px 16px; border-radius:10px; font-size:13.5px; z-index:50; }
   .output-box{ white-space:pre-wrap; font-size:14px; line-height:1.6; min-height:180px; }
 
@@ -841,6 +861,7 @@ const NAV_ITEMS = [
   { key:'assistant', label:'Assistant',    ic:'sparkle'  },
   { key:'knowledge', label:'Knowledge',    ic:'book'     },
   { key:'members',   label:'Members',      ic:'idcard'   },
+  { key:'orphans',   label:'Orphans',      ic:'globe'    },
   { key:'calendar',  label:'Calendar',     ic:'calendar' },
   { key:'tools',     label:'Tools',        ic:'wand'     },
   { key:'dashboard', label:'Dashboard',    ic:'chart'    },
@@ -930,6 +951,7 @@ function mainBody(){
   if (view === 'editor') return viewEditor();
   if (view === 'combineResult') return viewCombineResult();
   if (view === 'members') return viewMembers();
+  if (view === 'orphans') return viewOrphans();
   if (view === 'roles') return viewRoles();
   if (view === 'sender') return viewSender();
   if (view === 'generate') return viewGenerate();
@@ -5786,6 +5808,663 @@ function attachHandlers(){
   const copySubjectBtn = document.querySelector('[data-copy-subject]');
   if (copySubjectBtn) copySubjectBtn.onclick = () => {
     navigator.clipboard.writeText(genSubject).then(()=>showToast('Subject copied'));
+  };
+
+  attachOrphanHandlers();
+}
+
+// ---------------- orphan placement ----------------
+// Mirrors the Orphan Placement Matcher workbook and the Orphan Training SOP:
+// each new orphan goes to the closest eligible leader in the SAME country, and
+// a leader gets at most one orphan per month. Leader tabs alternate each pull.
+
+// [as it appears in BI / leader list, match country, inbox]
+const ORPHAN_COUNTRY_SEED = [["BRA","Brazil","Portuguese"],["Brazil","Brazil","Portuguese"],["Brasil","Brazil","Portuguese"],["USA","United States","Placements"],["US","United States","Placements"],["United States","United States","Placements"],["United States of America","United States","Placements"],["CAN","Canada","Placements"],["Canada","Canada","Placements"],["MEX","Mexico","Spanish"],["Mexico","Mexico","Spanish"],["México","Mexico","Spanish"],["CHL","Chile","Spanish"],["Chile","Chile","Spanish"],["ECU","Ecuador","Spanish"],["Ecuador","Ecuador","Spanish"],["COL","Colombia","Spanish"],["Colombia","Colombia","Spanish"],["PER","Peru","Spanish"],["Peru","Peru","Spanish"],["ARG","Argentina","Spanish"],["Argentina","Argentina","Spanish"],["GUA","Guatemala","Spanish"],["GTM","Guatemala","Spanish"],["Guatemala","Guatemala","Spanish"],["SLV","El Salvador","Spanish"],["El Salvador","El Salvador","Spanish"],["HND","Honduras","Spanish"],["Honduras","Honduras","Spanish"],["NIC","Nicaragua","Spanish"],["Nicaragua","Nicaragua","Spanish"],["PAN","Panama","Spanish"],["Panama","Panama","Spanish"],["Panamá","Panama","Spanish"],["PRY","Paraguay","Spanish"],["Paraguay","Paraguay","Spanish"],["DOM","Dominican Republic","Spanish"],["Dominican Republic","Dominican Republic","Spanish"],["CRI","Costa Rica","Spanish"],["Costa Rica","Costa Rica","Spanish"],["BOL","Bolivia","Spanish"],["Bolivia","Bolivia","Spanish"],["URY","Uruguay","Spanish"],["Uruguay","Uruguay","Spanish"],["VEN","Venezuela","Spanish"],["Venezuela","Venezuela","Spanish"],["DEU","Germany","Europe"],["Germany","Germany","Europe"],["Deutschland","Germany","Europe"],["FRA","France","Europe"],["France","France","Europe"],["ESP","Spain","Europe"],["Spain","Spain","Europe"],["España","Spain","Europe"],["PRT","Portugal","Europe"],["Portugal","Portugal","Europe"],["ITA","Italy","Europe"],["Italy","Italy","Europe"],["Italia","Italy","Europe"],["AUT","Austria","Europe"],["Austria","Austria","Europe"],["Österreich","Austria","Europe"],["BEL","Belgium","Europe"],["Belgium","Belgium","Europe"],["BGR","Bulgaria","Europe"],["Bulgaria","Bulgaria","Europe"],["CZE","Czech Republic","Europe"],["Czech Republic","Czech Republic","Europe"],["Czechia","Czech Republic","Europe"],["HUN","Hungary","Europe"],["Hungary","Hungary","Europe"],["Magyarország","Hungary","Europe"],["IRL","Ireland","Europe"],["Ireland","Ireland","Europe"],["NLD","Netherlands","Europe"],["Netherlands","Netherlands","Europe"],["The Netherlands","Netherlands","Europe"],["Holland","Netherlands","Europe"],["NOR","Norway","Europe"],["Norway","Norway","Europe"],["ROU","Romania","Europe"],["Romania","Romania","Europe"],["România","Romania","Europe"],["SVK","Slovakia","Europe"],["Slovakia","Slovakia","Europe"],["CHE","Switzerland","Europe"],["Switzerland","Switzerland","Europe"],["Schweiz","Switzerland","Europe"],["Suisse","Switzerland","Europe"],["LIE","Liechtenstein","Europe"],["Liechtenstein","Liechtenstein","Europe"],["SWE","Sweden","Europe"],["Sweden","Sweden","Europe"],["DNK","Denmark","Europe"],["Denmark","Denmark","Europe"],["FIN","Finland","Europe"],["Finland","Finland","Europe"],["LTU","Lithuania","Europe"],["Lithuania","Lithuania","Europe"],["LVA","Latvia","Europe"],["Latvia","Latvia","Europe"],["EST","Estonia","Europe"],["Estonia","Estonia","Europe"],["POL","Poland","Europe"],["Poland","Poland","Europe"],["Polska","Poland","Europe"],["SRB","Serbia","Europe"],["Serbia","Serbia","Europe"],["HRV","Croatia","Europe"],["Croatia","Croatia","Europe"],["SVN","Slovenia","Europe"],["Slovenia","Slovenia","Europe"],["GRC","Greece","Europe"],["Greece","Greece","Europe"],["CYP","Cyprus","Europe"],["Cyprus","Cyprus","Europe"],["LUX","Luxembourg","Europe"],["Luxembourg","Luxembourg","Europe"],["ISL","Iceland","Europe"],["Iceland","Iceland","Europe"],["UKR","Ukraine","Europe"],["Ukraine","Ukraine","Europe"],["RUS","Russia","Europe"],["Russia","Russia","Europe"],["GBR","United Kingdom","Europe"],["UK","United Kingdom","Europe"],["United Kingdom","United Kingdom","Europe"],["Great Britain","United Kingdom","Europe"],["England","United Kingdom","Europe"],["Scotland","United Kingdom","Europe"],["Wales","United Kingdom","Europe"],["Northern Ireland","United Kingdom","Europe"],["ISR","Israel","Placements"],["Israel","Israel","Placements"],["MYS","Malaysia","Placements"],["Malaysia","Malaysia","Placements"],["SGP","Singapore","Placements"],["Singapore","Singapore","Placements"],["HKG","Hong Kong","Placements"],["Hong Kong","Hong Kong","Placements"],["ZAF","South Africa","Placements"],["South Africa","South Africa","Placements"],["ARE","United Arab Emirates","Placements"],["UAE","United Arab Emirates","Placements"],["United Arab Emirates","United Arab Emirates","Placements"],["PYF","French Polynesia","Placements"],["French Polynesia","French Polynesia","Placements"],["KAZ","Kazakhstan","Placements"],["Kazakhstan","Kazakhstan","Placements"],["UZB","Uzbekistan","Placements"],["Uzbekistan","Uzbekistan","Placements"],["THA","Thailand","Placements"],["Thailand","Thailand","Placements"],["TWN","Taiwan","Placements"],["Taiwan","Taiwan","Placements"],["IDN","Indonesia","Placements"],["Indonesia","Indonesia","Placements"],["PHL","Philippines","Placements"],["Philippines","Philippines","Placements"],["BMU","Bermuda","Placements"],["Bermuda","Bermuda","Placements"],["EO","CHECK COUNTRY",""],["EU","CHECK COUNTRY",""],["GAC","CHECK COUNTRY",""],["Europe Other","CHECK COUNTRY",""]];
+// [city or postal code, match country, lat, lon]
+const ORPHAN_PLACE_SEED = [["Manaus","Brazil",-3.119,-60.0217],["Fortaleza","Brazil",-3.7319,-38.5267],["Brasília","Brazil",-15.7939,-47.8828],["Pires do Rio","Brazil",-17.299,-48.279],["Santa Helena de Goiás","Brazil",-17.8136,-50.5975],["São Luís de Montes Belos","Brazil",-16.525,-50.372],["São Luís","Brazil",-2.5297,-44.3028],["Pinheiro","Brazil",-2.522,-45.083],["Trizidela do Vale","Brazil",-4.997,-44.628],["Contagem","Brazil",-19.932,-44.0539],["Divinópolis","Brazil",-20.144,-44.891],["Nova Serrana","Brazil",-19.876,-44.984],["Belém","Brazil",-1.4558,-48.4902],["Aurora do Pará","Brazil",-2.134,-47.559],["Olinda","Brazil",-8.0089,-34.8553],["Foz do Iguaçu","Brazil",-25.5163,-54.5854],["Medianeira","Brazil",-25.295,-54.094],["Marechal Cândido Rondon","Brazil",-24.556,-54.057],["Londrina","Brazil",-23.3045,-51.1696],["Petrópolis","Brazil",-22.505,-43.1786],["Natal","Brazil",-5.7945,-35.211],["Porto Alegre","Brazil",-30.0346,-51.2177],["Teutônia","Brazil",-29.448,-51.806],["Alegrete","Brazil",-29.783,-55.791],["Blumenau","Brazil",-26.9194,-49.0661],["Itapoá","Brazil",-26.117,-48.617],["Videira","Brazil",-27.008,-51.152],["Princesa","Brazil",-26.443,-53.598],["São Caetano do Sul","Brazil",-23.6229,-46.5548],["Santos","Brazil",-23.9608,-46.3336],["Atibaia","Brazil",-23.1171,-46.5563],["Pirajuí","Brazil",-21.999,-49.457],["Salvador","Brazil",-12.9714,-38.5014],["Vitória da Conquista","Brazil",-14.8661,-40.8394],["Serrinha","Brazil",-11.664,-39.008],["Goiânia","Brazil",-16.6869,-49.2648],["Itumbiara","Brazil",-18.419,-49.215],["Edéia","Brazil",-17.34,-49.93],["Jussara","Brazil",-15.865,-50.867],["Imperatriz","Brazil",-5.526,-47.479],["Belo Horizonte","Brazil",-19.9167,-43.9345],["Nova Lima","Brazil",-19.985,-43.847],["Araguari","Brazil",-18.647,-48.187],["São Gotardo","Brazil",-19.311,-46.049],["Santarém","Brazil",-2.443,-54.708],["João Pessoa","Brazil",-7.1195,-34.845],["Tacaratu","Brazil",-9.106,-38.15],["Ponta Grossa","Brazil",-25.095,-50.1619],["Rolândia","Brazil",-23.31,-51.369],["Extremoz","Brazil",-5.705,-35.307],["Espigão D'Oeste","Brazil",-11.526,-61.013],["Lajeado","Brazil",-29.4669,-51.9614],["Santa Maria","Brazil",-29.6842,-53.8069],["Palmitinho","Brazil",-27.359,-53.558],["Campo Novo","Brazil",-27.675,-53.805],["Passo Fundo","Brazil",-28.262,-52.408],["Florianópolis","Brazil",-27.5954,-48.548],["Itapema","Brazil",-27.09,-48.611],["Maracajá","Brazil",-28.847,-49.46],["Joinville","Brazil",-26.3045,-48.8487],["São Bento do Sul","Brazil",-26.25,-49.379],["Arujá","Brazil",-23.396,-46.32],["Jacareí","Brazil",-23.305,-45.966],["Piracicaba","Brazil",-22.7253,-47.6492],["Matão","Brazil",-21.603,-48.366],["Sorocaba","Brazil",-23.5015,-47.4526],["Palmas","Brazil",-10.184,-48.3336],["Guarujá","Brazil",-23.9935,-46.2564],["Alma","Canada",48.548,-71.661],["Armstrong","Canada",50.448,-119.196],["Devon","Canada",53.363,-113.733],["Edmonton","Canada",53.5461,-113.4938],["Lachute","Canada",45.652,-74.336],["London","Canada",42.9849,-81.2453],["Quebec","Canada",46.8139,-71.208],["Québec","Canada",46.8139,-71.208],["Thornhill","Canada",43.81,-79.45],["Toronto","Canada",43.6532,-79.3832],["Wellandport","Canada",43.011,-79.532],["Winnipeg","Canada",49.8951,-97.1384],["Delta","Canada",49.0847,-123.0586],["Richmond","Canada",49.1666,-123.1336],["Verdun","Canada",45.458,-73.569],["Concón","Chile",-32.923,-71.519],["Rancagua","Chile",-34.17,-70.744],["Santiago","Chile",-33.4489,-70.6693],["Punta Arenas","Chile",-53.1638,-70.9171],["Valdivia","Chile",-39.8142,-73.2459],["Berlin","Germany",52.52,13.405],["Hamburg","Germany",53.5511,9.9937],["Leipzig","Germany",51.3397,12.3731],["Köln","Germany",50.9375,6.9603],["Cologne","Germany",50.9375,6.9603],["Pforzheim","Germany",48.8922,8.6946],["Oschatz","Germany",51.3,13.107],["Glauchau","Germany",50.818,12.544],["Barsinghausen","Germany",52.302,9.459],["Spenge","Germany",52.14,8.484],["Horn-Bad Meinberg","Germany",51.897,8.98],["Rheine","Germany",52.28,7.45],["Molbergen","Germany",52.858,7.926],["Aachen","Germany",50.7753,6.0839],["Zell","Germany",50.028,7.182],["Namborn","Germany",49.52,7.14],["Oberkochen","Germany",48.784,10.105],["Steinen","Germany",47.644,7.74],["Kolbermoor","Germany",47.85,12.067],["Warthausen","Germany",48.129,9.797],["Egloffstein","Germany",49.703,11.257],["Metten","Germany",48.8556,12.915],["Stolpen","Germany",51.049,14.083],["Strausberg","Germany",52.579,13.882],["Wachtendonk","Germany",51.408,6.338],["Lingen","Germany",52.523,7.316],["Heinsberg","Germany",51.063,6.096],["Mudau","Germany",49.533,9.204],["Hardheim","Germany",49.611,9.473],["Vienna","Austria",48.2082,16.3738],["Wien","Austria",48.2082,16.3738],["Herzogenburg","Austria",48.287,15.694],["Pöchlarn","Austria",48.211,15.21],["Wundschuh","Austria",46.925,15.45],["Bergheim","Austria",47.837,13.023],["Budapest","Hungary",47.4979,19.0402],["Szeged","Hungary",46.253,20.1414],["Debrecen","Hungary",47.5316,21.6273],["Dunakeszi","Hungary",47.636,19.138],["Szolnok","Hungary",47.175,20.196],["Pécs","Hungary",46.0727,18.2323],["Pecs","Hungary",46.0727,18.2323],["Makó","Hungary",46.215,20.478],["Szajol","Hungary",47.178,20.298],["Miskolc","Hungary",48.1035,20.7784],["Balkány","Hungary",47.77,21.86],["Szekszárd","Hungary",46.35,18.7],["Szekszard","Hungary",46.35,18.7],["Bucharest","Romania",44.4268,26.1025],["Bucuresti","Romania",44.4268,26.1025],["București","Romania",44.4268,26.1025],["Timisoara","Romania",45.7489,21.2087],["Timișoara","Romania",45.7489,21.2087],["Iasi","Romania",47.1585,27.6014],["Iași","Romania",47.1585,27.6014],["Ploiesti","Romania",44.936,26.013],["Arad","Romania",46.176,21.319],["Hunedoara","Romania",45.75,22.9],["Satu Mare","Romania",47.792,22.885],["Dej","Romania",47.142,23.874],["Bragadiru","Romania",44.371,25.975],["Mangalia","Romania",43.817,28.583],["Sofia","Bulgaria",42.6977,23.3219],["Plovdiv","Bulgaria",42.1354,24.7453],["Tartu","Estonia",58.378,26.729],["Šiauliai","Lithuania",55.9333,23.3167],["Bratislava","Slovakia",48.1486,17.1077],["Nove Zamky","Slovakia",47.986,18.162],["Kladno","Czech Republic",50.147,14.103],["Basel","Switzerland",47.5596,7.5886],["Winterthur","Switzerland",47.5,8.724],["Zweisimmen","Switzerland",46.555,7.373],["Buchs","Switzerland",47.168,9.478],["Limhamn","Sweden",55.58,12.93],["Kragerø","Norway",58.875,9.4],["Jessheim","Norway",60.142,11.175],["Coimbra","Portugal",40.2,-8.41],["Setubal","Portugal",38.525,-8.88],["Tavira","Portugal",37.127,-7.65],["Madrid","Spain",40.4168,-3.7038],["Warszawa","Poland",52.2297,21.0122],["Warsaw","Poland",52.2297,21.0122],["Szczecin","Poland",53.4285,14.5528],["Gdynia","Poland",54.5189,18.5305],["Przywidz","Poland",54.1953,18.3264],["Otwock","Poland",52.106,21.261],["Perugia","Italy",43.1107,12.3908],["Faenza","Italy",44.285,11.883],["Pescara","Italy",42.46,14.21],["London","United Kingdom",51.5074,-0.1278],["Northampton","United Kingdom",52.2405,-0.9027],["Worcester","United Kingdom",52.192,-2.22],["Bedford","United Kingdom",52.136,-0.467],["Winchester","United Kingdom",51.0632,-1.308],["Mexico City","Mexico",19.4326,-99.1332],["México","Mexico",19.4326,-99.1332],["Monterrey","Mexico",25.6866,-100.3161],["Chihuahua","Mexico",28.6353,-106.0889],["Colima","Mexico",19.2433,-103.725],["Zapopan","Mexico",20.7214,-103.391],["Pachuca De Soto","Mexico",20.1011,-98.7591],["Veracruz","Mexico",19.1738,-96.1342],["Zamora","Mexico",19.9855,-102.2839],["Guayaquil","Ecuador",-2.1894,-79.8891],["Loja","Ecuador",-3.993,-79.204],["Santo Domingo","Dominican Republic",18.4861,-69.9312],["Panama","Panama",8.9824,-79.5199],["Loma Plata","Paraguay",-22.379,-59.846],["Filadelfia","Paraguay",-22.35,-60.033],["San Salvador","El Salvador",13.6929,-89.2182],["Singapore","Singapore",1.3521,103.8198],["Kuala Lumpur","Malaysia",3.139,101.6869],["Johor Bahru","Malaysia",1.4927,103.7414],["Kuching","Malaysia",1.5535,110.3593],["Tel Aviv","Israel",32.0853,34.7818],["Modiin","Israel",31.898,35.01],["Cape Town","South Africa",-33.9249,18.4241],["Dubai","United Arab Emirates",25.2048,55.2708],["Bangkok","Thailand",13.7563,100.5018],["Karaganda","Kazakhstan",49.806,73.085],["Tashkent","Uzbekistan",41.2995,69.2401],["New York","United States",40.7128,-74.006],["Nashville","United States",36.1627,-86.7816],["Chesapeake","United States",36.7682,-76.2875],["West Haven","United States",41.203,-112.048],["Lehi","United States",40.3916,-111.8508],["South Jordan","United States",40.5622,-111.9297]];
+// Markets that place their own orphans (SOP Phase 2, step 5).
+const ORPHAN_SELF_PLACING = ['australia','aus','china','chn','india','ind','japan','jpn','korea','south korea','kor','new zealand','nzl'];
+// Placed by postal code rather than city (SOP Phase 4, step 6).
+const ORPHAN_ZIP_COUNTRIES = ['Singapore','Russia','Thailand','Taiwan','Kazakhstan','Ukraine'];
+const ORPHAN_TABS = ['50-499','500+'];
+
+let orphanPaste = '';
+let orphanLeaderPaste = { '50-499':'', '500+':'' };
+let orphanUsedPaste = '';
+let orphanCountryPaste = null;   // null = not editing
+let orphanSetupOpen = false;
+let orphanGeo = null;            // { done, total, failed } while looking up locations
+let orphanError = '';
+
+function monthKey(){ return todayKey().slice(0,7); }
+function monthLabel(key){
+  const [y,m] = key.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleString('en-US', { month:'long', year:'numeric' });
+}
+function orphanNorm(s){ return String(s == null ? '' : s).trim().toLowerCase(); }
+function orphanNum(v){
+  if (v === '' || v == null) return NaN;
+  const n = Number(String(v).trim().replace(',', '.'));
+  return isFinite(n) ? n : NaN;
+}
+
+function orphanData(){
+  if (!state.orphans || typeof state.orphans !== 'object') state.orphans = {};
+  const o = state.orphans;
+  if (!Array.isArray(o.leaders)) o.leaders = [];        // [id, name, match, city, lat, lon, count, tab]
+  if (!o.leadersUpdated) o.leadersUpdated = {};
+  if (!Array.isArray(o.pullLog)) o.pullLog = [];        // { date, tab, placed }
+  if (!o.places) o.places = {};                         // key -> [lat, lon]
+  if (!Array.isArray(o.countryExtra)) o.countryExtra = [];
+  if (!o.batch) o.batch = { orphans: [], overrides: {}, tabOverride: '' };
+  if (!o.batch.overrides) o.batch.overrides = {};
+  if (!o.used || typeof o.used !== 'object') o.used = { month: monthKey(), ids: [] };
+  // A leader can get one orphan per month, so the list starts over each month.
+  if (o.used.month !== monthKey()) o.used = { month: monthKey(), ids: [] };
+  return o;
+}
+
+let __orphanCountryCache = null;
+function orphanCountryTable(){
+  const extra = orphanData().countryExtra;
+  const sig = JSON.stringify(extra);
+  if (__orphanCountryCache && __orphanCountryCache.sig === sig) return __orphanCountryCache;
+  const byName = new Map(), inboxByMatch = new Map();
+  [...ORPHAN_COUNTRY_SEED, ...extra].forEach(([as, match, inbox]) => {
+    byName.set(orphanNorm(as), { match, inbox: inbox || '' });
+    if (inbox) inboxByMatch.set(match, inbox);
+  });
+  return (__orphanCountryCache = { sig, byName, inboxByMatch });
+}
+
+function orphanCountry(raw){
+  const t = orphanCountryTable();
+  const hit = t.byName.get(orphanNorm(raw));
+  if (hit) return { match: hit.match, inbox: hit.inbox || t.inboxByMatch.get(hit.match) || '' };
+  const proper = String(raw||'').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  return { match: proper, inbox: t.inboxByMatch.get(proper) || '' };
+}
+
+let __orphanPlaceSeed = null;
+function orphanPlace(key){
+  if (!__orphanPlaceSeed) {
+    __orphanPlaceSeed = new Map();
+    ORPHAN_PLACE_SEED.forEach(([p, c, lat, lon]) => __orphanPlaceSeed.set(orphanNorm(p) + '|' + orphanNorm(c), [lat, lon]));
+  }
+  return orphanData().places[key] || __orphanPlaceSeed.get(key) || null;
+}
+
+// Cache keys an orphan's location can be found under, most specific first.
+function orphanPlaceKeys(row, match){
+  const m = orphanNorm(match), city = orphanNorm(row.city), st = orphanNorm(row.state), zip = orphanNorm(row.postal);
+  const cityKeys = city ? [ ...(st ? [city + '|' + st + '|' + m] : []), city + '|' + m ] : [];
+  const zipKeys = zip ? ['zip:' + zip + '|' + m] : [];
+  return ORPHAN_ZIP_COUNTRIES.includes(match) ? [...zipKeys, ...cityKeys] : [...cityKeys, ...zipKeys];
+}
+
+function orphanCoords(row, match){
+  const lat = orphanNum(row.lat), lon = orphanNum(row.lon);
+  if (!isNaN(lat) && !isNaN(lon)) return [lat, lon];
+  for (const k of orphanPlaceKeys(row, match)) { const hit = orphanPlace(k); if (hit) return hit; }
+  return null;
+}
+
+function orphanLeaderCoords(l){
+  const lat = orphanNum(l[4]), lon = orphanNum(l[5]);
+  if (!isNaN(lat) && !isNaN(lon)) return [lat, lon];
+  return l[3] ? orphanPlace(orphanNorm(l[3]) + '|' + orphanNorm(l[2])) : null;
+}
+
+function orphanLastPull(){
+  const log = orphanData().pullLog;
+  return log.length ? log[log.length-1] : null;
+}
+
+// Flips on every finished pull, including a second pull on the same day.
+function orphanTabToday(){
+  const o = orphanData();
+  if (o.batch.tabOverride) return o.batch.tabOverride;
+  const last = orphanLastPull();
+  if (!last) return '';
+  return last.tab === '50-499' ? '500+' : '50-499';
+}
+
+function haversineMiles(a, b){
+  const r = x => x * Math.PI / 180;
+  const h = Math.sin(r(b[0]-a[0])/2)**2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(r(b[1]-a[1])/2)**2;
+  return 3958.8 * 2 * Math.asin(Math.sqrt(h));
+}
+
+// Reads a block copied from Excel. A header row is matched by name; without one
+// the columns are taken in the order listed.
+function parseSheetPaste(text, fields){
+  const lines = String(text||'').replace(/\r/g,'').split('\n').filter(l => l.trim());
+  if (!lines.length) return { rows: [], missing: [] };
+  const first = lines[0].split('\t').map(c => c.trim());
+  const map = {};
+  const isHeader = first[0] && !/^\d+$/.test(first[0]) && fields.some(f => first.some(c => f.re.test(c)));
+  if (isHeader) {
+    lines.shift();
+    // Specific columns first, so "Type Name" is claimed before "Name".
+    [...fields].sort((a,b) => (a.prio||9) - (b.prio||9)).forEach(f => {
+      const taken = Object.values(map);
+      const i = first.findIndex((c, idx) => f.re.test(c) && !taken.includes(idx));
+      if (i >= 0) map[f.key] = i;
+    });
+  } else {
+    fields.forEach((f, i) => map[f.key] = i);
+  }
+  const rows = lines.map(l => {
+    const cells = l.split('\t');
+    const r = {};
+    fields.forEach(f => r[f.key] = map[f.key] === undefined ? '' : String(cells[map[f.key]] || '').trim());
+    return r;
+  });
+  const missing = fields.filter(f => f.required && map[f.key] === undefined).map(f => f.label);
+  return { rows, missing };
+}
+
+const ORPHAN_FIELDS = [
+  { key:'id',      label:'Orphan ID', re:/(^|\b)id$|^id\b|number/i, required:true, prio:5 },
+  { key:'name',    label:'Name',      re:/name/i, prio:6 },
+  { key:'type',    label:'Type',      re:/type/i, prio:1 },
+  { key:'city',    label:'City',      re:/city|address.?3/i, prio:2 },
+  { key:'state',   label:'State',     re:/state|province|region/i, prio:2 },
+  { key:'country', label:'Country',   re:/country/i, required:true, prio:1 },
+  { key:'postal',  label:'Postal code', re:/postal|zip/i, prio:1 },
+  { key:'lat',     label:'Lat',       re:/^lat/i, prio:1 },
+  { key:'lon',     label:'Lon',       re:/^(lon|lng)/i, prio:1 },
+];
+const LEADER_FIELDS = [
+  { key:'id',      label:'Leader ID', re:/(^|\b)id$|^id\b|number/i, required:true, prio:5 },
+  { key:'name',    label:'Name',      re:/name/i, prio:6 },
+  { key:'country', label:'Country',   re:/country/i, required:true, prio:1 },
+  { key:'city',    label:'City',      re:/city|address.?3/i, prio:2 },
+  { key:'lat',     label:'Lat',       re:/^lat/i, prio:1 },
+  { key:'lon',     label:'Lon',       re:/^(lon|lng)/i, prio:1 },
+  { key:'count',   label:'Count',     re:/count/i, prio:1 },
+];
+
+function orphanEligibleLeaders(){
+  const o = orphanData(), tab = orphanTabToday();
+  const used = new Set(o.used.ids.map(String));
+  const byCountry = new Map();
+  o.leaders.forEach((l, idx) => {
+    if (l[7] !== tab || (Number(l[6]) || 0) !== 0 || used.has(String(l[0]))) return;
+    const coords = orphanLeaderCoords(l);
+    if (!coords) return;
+    if (!byCountry.has(l[2])) byCountry.set(l[2], []);
+    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', coords });
+  });
+  return byCountry;
+}
+
+// Orphans are matched top to bottom; ties go to the leader higher on the list.
+// Leaders picked by hand are reserved first so nobody else can take them.
+function computeOrphanResults(){
+  const o = orphanData();
+  const byCountry = orphanEligibleLeaders();
+  const taken = new Set();
+  const rows = o.batch.orphans.map(r => {
+    const c = orphanCountry(r.country);
+    const row = { ...r, match: c.match, inbox: c.inbox, coords: null, leader: null, miles: null, options: [], status: '' };
+    if (/retail/i.test(r.type)) { row.status = 'retail'; return row; }
+    if (/\btest\b/i.test(r.name)) { row.status = 'test'; return row; }
+    if (ORPHAN_SELF_PLACING.includes(orphanNorm(r.country))) { row.status = 'selfplace'; return row; }
+    if (c.match === 'CHECK COUNTRY') { row.status = 'checkcountry'; return row; }
+    row.coords = orphanCoords(r, c.match);
+    if (!row.coords) { row.status = 'needcoords'; return row; }
+    row.ranked = (byCountry.get(c.match) || [])
+      .map(l => ({ l, miles: Math.round(haversineMiles(row.coords, l.coords) * 100) / 100 }))
+      .sort((a, b) => a.miles - b.miles || a.l.idx - b.l.idx);
+    return row;
+  });
+
+  const pick = (row, choice) => { row.leader = choice.l; row.miles = choice.miles; row.status = 'ready'; taken.add(choice.l.id); };
+  rows.forEach(row => {
+    const want = row.ranked && o.batch.overrides[row.id];
+    const choice = want && row.ranked.find(x => x.l.id === String(want));
+    if (choice && !taken.has(choice.l.id)) { pick(row, choice); row.manual = true; }
+  });
+  rows.forEach(row => {
+    if (!row.ranked || row.leader) return;
+    const choice = row.ranked.find(x => !taken.has(x.l.id));
+    if (choice) pick(row, choice); else row.status = 'noleader';
+  });
+  // Alternatives for the dropdown: the nearest leaders, noting who already has
+  // one. Picking a taken leader reserves them here and re-matches the other orphan.
+  const holder = new Map(rows.filter(r => r.leader).map(r => [r.leader.id, r.id]));
+  rows.forEach(row => {
+    if (!row.ranked) return;
+    row.options = row.ranked.slice(0, 8).map(x => ({ ...x, heldBy: holder.get(x.l.id) !== row.id ? holder.get(x.l.id) || '' : '' }));
+  });
+  return rows;
+}
+
+const ORPHAN_STATUS = {
+  ready:        { label:'Ready',                      tone:'ok' },
+  retail:       { label:'Retail – goes to tree 12',   tone:'ok' },
+  test:         { label:'Test account – delete',      tone:'warn' },
+  selfplace:    { label:'Market places its own – remove', tone:'warn' },
+  checkcountry: { label:'EO/GAC – use the real country', tone:'warn' },
+  needcoords:   { label:'Needs location',             tone:'warn' },
+  noleader:     { label:'No eligible leader in country – place by hand', tone:'bad' },
+};
+
+function orphanPlaced(rows){ return rows.filter(r => r.status === 'ready' || r.status === 'retail'); }
+function orphanLeaderIdOf(r){ return r.status === 'retail' ? '12' : (r.leader ? r.leader.id : ''); }
+function orphanLeaderNameOf(r){ return r.status === 'retail' ? 'Retail Customer' : (r.leader ? r.leader.name : ''); }
+
+function orphanTsv(rows, kind){
+  if (kind === 'orphanIds') return rows.map(r => r.id).join('\n');
+  if (kind === 'leaderIds') return rows.map(orphanLeaderIdOf).join('\n');
+  if (kind === 'leaderNames') return rows.map(orphanLeaderNameOf).join('\n');
+  if (kind === 'inbox') return rows.map(r => r.inbox).join('\n');
+  if (kind === 'country') return rows.map(r => r.match).join('\n');
+  const head = ['Orphan ID','Orphan Name','Country','Leader ID (enroller)','Leader Name','Distance (miles)','Inbox','Assigned date'];
+  const date = new Date().toLocaleDateString('en-US');
+  return [head, ...rows.map(r => [r.id, r.name, r.match, orphanLeaderIdOf(r), orphanLeaderNameOf(r), r.miles == null ? '' : r.miles, r.inbox, date])]
+    .map(c => c.join('\t')).join('\n');
+}
+
+// ---- location lookup (replaces Data → Geography and the ChatGPT step) ----
+async function orphanGeocode(params){
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&' + new URLSearchParams(params);
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+  if (!resp.ok) throw new Error('Location lookup failed (' + resp.status + ')');
+  const d = await resp.json();
+  return d[0] ? [ Math.round(+d[0].lat * 10000) / 10000, Math.round(+d[0].lon * 10000) / 10000 ] : null;
+}
+
+function orphanLookupJobs(rows){
+  const jobs = new Map();
+  rows.filter(r => r.status === 'needcoords').forEach(r => {
+    const zipFirst = ORPHAN_ZIP_COUNTRIES.includes(r.match);
+    if (r.postal && zipFirst) {
+      jobs.set('zip:' + orphanNorm(r.postal) + '|' + orphanNorm(r.match), { postalcode: r.postal, country: r.match });
+    } else if (r.city) {
+      jobs.set(orphanPlaceKeys(r, r.match)[0], r.state ? { city: r.city, state: r.state, country: r.match } : { city: r.city, country: r.match });
+    } else if (r.postal) {
+      jobs.set('zip:' + orphanNorm(r.postal) + '|' + orphanNorm(r.match), { postalcode: r.postal, country: r.match });
+    }
+  });
+  // Leaders in today's countries with no lat/lon would otherwise be skipped.
+  const o = orphanData(), tab = orphanTabToday();
+  const countries = new Set(rows.map(r => r.match));
+  o.leaders.forEach(l => {
+    if (l[7] !== tab || !countries.has(l[2]) || !l[3] || orphanLeaderCoords(l)) return;
+    jobs.set(orphanNorm(l[3]) + '|' + orphanNorm(l[2]), { city: l[3], country: l[2] });
+  });
+  return [...jobs.entries()];
+}
+
+async function runOrphanLookup(){
+  const jobs = orphanLookupJobs(computeOrphanResults());
+  if (!jobs.length) { showToast('Nothing to look up'); return; }
+  orphanGeo = { done: 0, total: jobs.length, failed: [] };
+  render();
+  const places = orphanData().places;
+  for (const [key, params] of jobs) {
+    try {
+      let hit = await orphanGeocode(params);
+      // A state the geocoder doesn't recognise shouldn't sink the whole lookup.
+      if (!hit && params.state) { await new Promise(r => setTimeout(r, 1100)); hit = await orphanGeocode({ city: params.city, country: params.country }); }
+      if (hit) places[key] = hit; else orphanGeo.failed.push(params.city || params.postalcode);
+    } catch (e) {
+      orphanGeo.failed.push(params.city || params.postalcode);
+    }
+    orphanGeo.done++;
+    render();
+    // OpenStreetMap's free service allows one request per second.
+    await new Promise(r => setTimeout(r, 1100));
+  }
+  const failed = orphanGeo.failed;
+  orphanGeo = null;
+  saveState();
+  showToast(failed.length ? `${failed.length} place${failed.length===1?'':'s'} not found — type lat/lon by hand` : 'Locations found');
+}
+
+// ---- view ----
+function orphanStat(label, value, tone, note){
+  const color = tone === 'bad' ? '#C13B30' : tone === 'warn' ? '#B4690E' : 'var(--ink)';
+  return `<div class="orph-stat"><div class="orph-stat-val" style="color:${value && tone ? color : 'var(--ink)'};">${value}</div><div class="orph-stat-lbl">${label}</div>${note ? `<div class="hint" style="margin-top:2px;">${note}</div>` : ''}</div>`;
+}
+
+function viewOrphans(){
+  const o = orphanData();
+  const tab = orphanTabToday();
+  const last = orphanLastPull();
+  const rows = computeOrphanResults();
+  const placed = orphanPlaced(rows);
+  const count = s => rows.filter(r => r.status === s).length;
+  const eligible = [...orphanEligibleLeaders().values()].reduce((n, a) => n + a.length, 0);
+  const leaderCount = t => o.leaders.filter(l => l[7] === t).length;
+  const fmtDate = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'numeric', day:'numeric' }) : '';
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Orphan placement</div>
+        <div class="subtle">Closest eligible leader in the same country · one orphan per leader per month</div>
+      </div>
+      <button data-orph-setup class="btn btn-ghost" style="padding:8px 14px;">${icon('wand',15)} ${orphanSetupOpen ? 'Hide' : 'Monthly'} setup</button>
+    </div>
+
+    ${orphanError ? `<div class="card orph-alert">${escapeHtml(orphanError)}</div>` : ''}
+    ${orphanSetupOpen || ORPHAN_TABS.some(t => !o.leaders.some(l => l[7] === t)) ? orphanSetupPanel() : ''}
+
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">This pull</label>
+      <div class="orph-stats">
+        <div class="orph-stat">
+          <div class="orph-stat-val" style="color:var(--primary);">${tab || '—'}</div>
+          <div class="orph-stat-lbl">Leader tab to use</div>
+          <select data-orph-tab-override style="margin-top:6px; width:auto; padding:4px 8px; font-size:12.5px;">
+            <option value="">${last ? 'Auto (flips each pull)' : 'Pick a tab'}</option>
+            ${ORPHAN_TABS.map(t => `<option value="${t}" ${o.batch.tabOverride===t?'selected':''}>Override: ${t}</option>`).join('')}
+          </select>
+        </div>
+        ${orphanStat('Last pull', last ? `${fmtDate(last.date)} · ${last.tab}` : 'None yet', '', last ? `Tableau: filter Most Recent Order from ${fmtDate(last.date)} through today` : 'Pick today’s tab to start')}
+        ${orphanStat('Leaders eligible now', eligible, '', 'Right tab, count 0, not used this month, has lat/lon')}
+        ${orphanStat('Used in ' + monthLabel(o.used.month).split(' ')[0], o.used.ids.length, '')}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">1. Paste orphans</label>
+      ${o.batch.orphans.length ? `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div class="subtle">${o.batch.orphans.length} orphan${o.batch.orphans.length===1?'':'s'} loaded${o.batch.loadedAt ? ' at ' + escapeHtml(o.batch.loadedAt) : ''}.</div>
+          <button data-orph-clear class="btn btn-ghost" style="padding:7px 12px;">${icon('trash',14)} Clear and paste new</button>
+        </div>
+      ` : `
+        <div class="hint" style="margin:0 0 8px;">From the BI Distributor List (after the Tableau date filter), copy the rows including the header row: ID, Name, Type, City, State, Country, Postal code. Markets that place their own, test accounts and retail customers are flagged for you.</div>
+        <textarea id="orph-paste" rows="5" placeholder="Paste from Excel here">${escapeHtml(orphanPaste)}</textarea>
+        <div style="margin-top:8px;"><button data-orph-load class="btn btn-primary" style="padding:8px 14px;">Load orphans</button></div>
+      `}
+    </div>
+
+    ${rows.length ? `
+      <div class="card" style="margin-bottom:16px;">
+        <label class="section">2. Check</label>
+        <div class="orph-stats">
+          ${orphanStat('Ready', count('ready'), '')}
+          ${orphanStat('Retail (tree 12)', count('retail'), '')}
+          ${orphanStat('Need location', count('needcoords'), 'warn')}
+          ${orphanStat('No leader in country', count('noleader'), 'bad')}
+          ${orphanStat('Remove / fix', count('test') + count('selfplace') + count('checkcountry'), 'warn')}
+          ${orphanStat('Missing inbox', placed.filter(r => r.status==='ready' && !r.inbox).length, 'warn')}
+        </div>
+        ${count('needcoords') || orphanGeo ? `
+          <div class="orph-geo">
+            ${orphanGeo
+              ? `Looking up locations… ${orphanGeo.done} of ${orphanGeo.total}`
+              : `<span>${count('needcoords')} orphan${count('needcoords')===1?'':'s'} need a location.</span> <button data-orph-geo class="btn btn-primary" style="padding:6px 12px;">${icon('globe',14)} Look up locations</button>`}
+          </div>` : ''}
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+          <label class="section" style="margin:0;">3. Results</label>
+          ${orphanCopyButtons('data-orph-copy')}
+        </div>
+        <div class="hint" style="margin:0 0 10px;">Each button copies one column for the Ready tab (only Ready and retail rows, always in the same order), so you can paste them one column at a time and they line up. Change a leader with the dropdown; the others re-match around it.</div>
+        <div class="orph-table-wrap">
+          <table class="orph-table">
+            <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th></tr></thead>
+            <tbody>${rows.map(orphanRow).join('')}</tbody>
+          </table>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+          <div class="subtle" style="max-width:520px;">When the IDs are in Ready, finish the pull. This logs it (so the next pull flips to ${tab === '50-499' ? '500+' : '50-499'}) and marks ${placed.filter(r=>r.leader).length} leader${placed.filter(r=>r.leader).length===1?'':'s'} as used for ${monthLabel(monthKey()).split(' ')[0]}. Their IDs are copied for Count &amp; Location.</div>
+          <button data-orph-finish class="btn btn-primary" style="padding:9px 16px;" ${tab ? '' : 'disabled'}>Finish pull</button>
+        </div>
+      </div>
+    ` : ''}
+
+    ${o.lastFinished && !rows.length ? `
+      <div class="card" style="margin-bottom:16px;">
+        <label class="section">Last finished pull · ${escapeHtml(fmtDate(o.lastFinished.date))} · ${escapeHtml(o.lastFinished.tab)}</label>
+        <div class="subtle" style="margin-bottom:10px;">${o.lastFinished.rows.length} placed. Copy again if you still need them for Ready or the emails.</div>
+        ${orphanCopyButtons('data-orph-copy-last')}
+      </div>
+    ` : ''}
+  `;
+}
+
+function orphanCopyButtons(attr){
+  const btns = [['orphanIds','Orphan IDs'], ['leaderIds','Leader IDs'], ['leaderNames','Leader names'], ['inbox','Inboxes'], ['country','Countries'], ['table','Whole table']];
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${btns.map(([k, l]) =>
+    `<button ${attr}="${k}" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} ${l}</button>`).join('')}</div>`;
+}
+
+function orphanRow(r){
+  const st = ORPHAN_STATUS[r.status] || { label: r.status, tone: '' };
+  let leaderCell = '';
+  if (r.status === 'retail') leaderCell = '12 · Retail Customer';
+  else if (r.status === 'ready' || r.status === 'noleader') {
+    leaderCell = r.options.length ? `
+      <select data-orph-pick="${escapeAttr(r.id)}" class="orph-pick">
+        ${r.leader ? '' : '<option value="">Pick a leader (takes them from another orphan)</option>'}
+        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name)} (${x.miles} mi)${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
+      </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}` : '—';
+  } else if (r.status === 'needcoords') {
+    leaderCell = `<span class="orph-ll"><input data-orph-lat="${escapeAttr(r.id)}" placeholder="Lat" /><input data-orph-lon="${escapeAttr(r.id)}" placeholder="Lon" /><button data-orph-ll="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
+  }
+  const where = [r.city, r.state].filter(Boolean).join(', ') || r.postal || '';
+  return `
+    <tr class="orph-${st.tone}">
+      <td><div style="font-weight:600;">${escapeHtml(r.id)}</div><div class="subtle" style="font-size:12px;">${escapeHtml(r.name)}</div></td>
+      <td>${escapeHtml(r.match)}<div class="subtle" style="font-size:12px;">${escapeHtml(where)}</div></td>
+      <td>${leaderCell}</td>
+      <td>${r.miles == null ? '' : r.miles}</td>
+      <td>${escapeHtml(r.inbox || (r.status==='ready' ? '?' : ''))}</td>
+      <td><span class="orph-pill orph-pill-${st.tone}">${escapeHtml(st.label)}</span></td>
+    </tr>`;
+}
+
+function orphanSetupPanel(){
+  const o = orphanData();
+  const n = t => o.leaders.filter(l => l[7] === t).length;
+  const missing = t => o.leaders.filter(l => l[7] === t && !orphanLeaderCoords(l)).length;
+  const countryText = orphanCountryPaste !== null ? orphanCountryPaste : o.countryExtra.map(r => r.join(', ')).join('\n');
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Monthly setup</label>
+      <div class="hint" style="margin:0 0 12px;">Once a month, when the new leader list comes out, paste each tab with its header row (Leader ID, Name, Country, City, Lat, Lon, Count). Pasting a tab replaces that tab only. The used-this-month list starts over by itself on the 1st.</div>
+      <div class="two-col">
+        ${ORPHAN_TABS.map(t => `
+          <div>
+            <div style="font-weight:600; font-size:14px; margin-bottom:4px;">${t} PGB tab</div>
+            <div class="subtle" style="font-size:12.5px; margin-bottom:6px;">${n(t)} leaders${o.leadersUpdated[t] ? ' · pasted ' + escapeHtml(o.leadersUpdated[t]) : ''}${missing(t) ? ` · <span style="color:#B4690E;">${missing(t)} missing lat/lon</span>` : ''}</div>
+            <textarea data-orph-leader-paste="${t}" rows="4" placeholder="Paste the ${t} tab here">${escapeHtml(orphanLeaderPaste[t])}</textarea>
+            <button data-orph-leader-load="${t}" class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Replace ${t} leaders</button>
+          </div>`).join('')}
+      </div>
+
+      <div class="role-block">
+        <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Used in ${escapeHtml(monthLabel(o.used.month))} <span class="subtle" style="font-weight:400;">· ${o.used.ids.length} leaders</span></div>
+        <div class="hint" style="margin:0 0 6px;">Finished pulls add their leaders here automatically. To start mid-month, paste this month's leader IDs from Count &amp; Location.</div>
+        <textarea id="orph-used-paste" rows="2" placeholder="Leader IDs, one per line">${escapeHtml(orphanUsedPaste)}</textarea>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <button data-orph-used-add class="btn btn-ghost" style="padding:7px 12px;">Add IDs</button>
+          ${o.used.ids.length ? `<button data-orph-used-clear class="btn btn-ghost" style="padding:7px 12px;">Clear list</button>` : ''}
+        </div>
+      </div>
+
+      <div class="role-block">
+        <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Pull log</div>
+        ${o.pullLog.length ? `
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            ${o.pullLog.slice(-6).reverse().map((p, i) => `
+              <div class="subtle" style="display:flex; align-items:center; gap:8px; font-size:13px;">
+                <span style="min-width:150px;">${escapeHtml(p.date)} · ${escapeHtml(p.tab)}</span><span>${p.placed != null ? p.placed + ' placed' : ''}</span>
+                ${i === 0 ? `<button data-orph-undo-pull class="icon-btn danger" style="width:26px; height:26px;" title="Remove this entry (does not un-use its leaders)">${icon('trash',13)}</button>` : ''}
+              </div>`).join('')}
+          </div>` : `<div class="subtle" style="font-size:13px;">No pulls yet. Pick the leader tab under "This pull" for your first one; it flips by itself after that.</div>`}
+      </div>
+
+      <div class="role-block">
+        <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Extra country names</div>
+        <div class="hint" style="margin:0 0 6px;">${ORPHAN_COUNTRY_SEED.length} country spellings are built in. Add any others as <em>name as it appears, match country, inbox</em>, one per line, e.g. <em>Brasil, Brazil, Portuguese</em>.</div>
+        <textarea id="orph-country-paste" rows="2">${escapeHtml(countryText)}</textarea>
+        <button data-orph-country-save class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Save countries</button>
+      </div>
+    </div>`;
+}
+
+// Falls back to a hidden textarea where the clipboard API isn't available.
+function orphanCopy(text, msg){
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch(e){}
+    ta.remove();
+    showToast(ok ? msg : 'Could not copy — select and copy by hand');
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => showToast(msg), fallback);
+  else fallback();
+}
+
+function attachOrphanHandlers(){
+  const o = orphanData();
+  const q = sel => document.querySelector(sel);
+  const all = (sel, fn) => document.querySelectorAll(sel).forEach(fn);
+
+  const setupBtn = q('[data-orph-setup]');
+  if (!setupBtn) return;
+  setupBtn.onclick = () => { orphanSetupOpen = !orphanSetupOpen; render(); };
+
+  const tabSel = q('[data-orph-tab-override]');
+  if (tabSel) tabSel.onchange = () => { o.batch.tabOverride = tabSel.value; o.batch.overrides = {}; saveState(); render(); };
+
+  const paste = q('#orph-paste');
+  if (paste) paste.oninput = () => { orphanPaste = paste.value; };
+  const loadBtn = q('[data-orph-load]');
+  if (loadBtn) loadBtn.onclick = () => {
+    const { rows, missing } = parseSheetPaste(orphanPaste, ORPHAN_FIELDS);
+    if (missing.length) { orphanError = 'Could not find these columns in the header row: ' + missing.join(', ') + '.'; render(); return; }
+    const list = rows.filter(r => r.id);
+    if (!list.length) { orphanError = 'Nothing to load. Copy the rows from Excel, including the header row.'; render(); return; }
+    orphanError = '';
+    o.batch.orphans = list;
+    o.batch.overrides = {};
+    o.batch.loadedAt = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+    orphanPaste = '';
+    saveState(); render();
+  };
+  const clearBtn = q('[data-orph-clear]');
+  if (clearBtn) clearBtn.onclick = () => {
+    if (!confirm('Clear the loaded orphans? Anything not yet copied into Ready will be lost.')) return;
+    o.batch.orphans = []; o.batch.overrides = {};
+    saveState(); render();
+  };
+
+  const geoBtn = q('[data-orph-geo]');
+  if (geoBtn) geoBtn.onclick = runOrphanLookup;
+
+  all('[data-orph-pick]', el => el.onchange = () => {
+    const id = el.getAttribute('data-orph-pick');
+    // A leader can only be held by hand for one orphan.
+    Object.keys(o.batch.overrides).forEach(k => { if (o.batch.overrides[k] === el.value) delete o.batch.overrides[k]; });
+    if (el.value) o.batch.overrides[id] = el.value; else delete o.batch.overrides[id];
+    saveState(); render();
+  });
+
+  all('[data-orph-ll]', el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-ll');
+    const lat = orphanNum(q(`[data-orph-lat="${CSS.escape(id)}"]`).value);
+    const lon = orphanNum(q(`[data-orph-lon="${CSS.escape(id)}"]`).value);
+    if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
+    const row = o.batch.orphans.find(r => r.id === id);
+    if (!row) return;
+    // Saved to the place list so the same city never needs looking up again.
+    const key = orphanPlaceKeys(row, orphanCountry(row.country).match)[0];
+    if (key) o.places[key] = [lat, lon]; else { row.lat = String(lat); row.lon = String(lon); }
+    saveState(); render();
+  });
+
+  all('[data-orph-copy]', el => el.onclick = () => {
+    const placed = orphanPlaced(computeOrphanResults());
+    orphanCopy(orphanTsv(placed, el.getAttribute('data-orph-copy')), placed.length + ' rows copied');
+  });
+  all('[data-orph-copy-last]', el => el.onclick = () => {
+    const rows = (o.lastFinished && o.lastFinished.rows) || [];
+    orphanCopy(orphanTsv(rows, el.getAttribute('data-orph-copy-last')), rows.length + ' rows copied');
+  });
+
+  const finishBtn = q('[data-orph-finish]');
+  if (finishBtn) finishBtn.onclick = () => {
+    const rows = computeOrphanResults();
+    const placed = orphanPlaced(rows);
+    const open = rows.length - placed.length;
+    const leaderIds = placed.filter(r => r.leader).map(r => r.leader.id);
+    const msg = `Finish this pull on the ${orphanTabToday()} tab?\n\n` +
+      `• ${placed.length} placed, ${leaderIds.length} leaders marked as used for ${monthLabel(monthKey()).split(' ')[0]}\n` +
+      (open ? `• ${open} not placed (they will be cleared — place them by hand)\n` : '') +
+      `• The loaded orphans are cleared; the placed rows stay available to copy.`;
+    if (!confirm(msg)) return;
+    o.used.ids = [...new Set([...o.used.ids, ...leaderIds])];
+    o.pullLog.push({ date: todayKey(), tab: orphanTabToday(), placed: placed.length });
+    o.lastFinished = {
+      date: todayKey(), tab: orphanTabToday(),
+      rows: placed.map(r => ({ id: r.id, name: r.name, match: r.match, status: r.status, leader: r.leader ? { id: r.leader.id, name: r.leader.name } : null, miles: r.miles, inbox: r.inbox })),
+    };
+    o.batch = { orphans: [], overrides: {}, tabOverride: '' };
+    saveState();
+    render();
+    orphanCopy(leaderIds.join('\n'), 'Pull finished — leader IDs copied for Count & Location');
+  };
+
+  all('[data-orph-leader-paste]', el => el.oninput = () => { orphanLeaderPaste[el.getAttribute('data-orph-leader-paste')] = el.value; });
+  all('[data-orph-leader-load]', el => el.onclick = () => {
+    const tab = el.getAttribute('data-orph-leader-load');
+    const { rows, missing } = parseSheetPaste(orphanLeaderPaste[tab], LEADER_FIELDS);
+    if (missing.length) { orphanError = 'Could not find these leader columns in the header row: ' + missing.join(', ') + '.'; render(); return; }
+    const list = rows.filter(r => r.id).map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, Number(r.count) || 0, tab]);
+    if (!list.length) { orphanError = 'No leaders found in that paste. Include the header row.'; render(); return; }
+    if (!confirm(`Replace the ${tab} tab with ${list.length} leaders?`)) return;
+    orphanError = '';
+    o.leaders = [...o.leaders.filter(l => l[7] !== tab), ...list];
+    o.leadersUpdated[tab] = new Date().toLocaleDateString('en-US');
+    orphanLeaderPaste[tab] = '';
+    saveState(); render();
+  });
+
+  const usedPaste = q('#orph-used-paste');
+  if (usedPaste) usedPaste.oninput = () => { orphanUsedPaste = usedPaste.value; };
+  const usedAdd = q('[data-orph-used-add]');
+  if (usedAdd) usedAdd.onclick = () => {
+    const ids = orphanUsedPaste.split(/[\s,]+/).map(s => s.trim()).filter(s => /^\d+$/.test(s));
+    if (!ids.length) { showToast('No leader IDs found'); return; }
+    o.used.ids = [...new Set([...o.used.ids, ...ids])];
+    orphanUsedPaste = '';
+    saveState(); render();
+  };
+  const usedClear = q('[data-orph-used-clear]');
+  if (usedClear) usedClear.onclick = () => {
+    if (!confirm('Clear the used-this-month list? Every leader becomes eligible again.')) return;
+    o.used.ids = [];
+    saveState(); render();
+  };
+
+  const undoPull = q('[data-orph-undo-pull]');
+  if (undoPull) undoPull.onclick = () => {
+    if (!confirm('Remove the latest pull log entry? The leader tab will flip back. Its leaders stay marked as used.')) return;
+    o.pullLog.pop();
+    saveState(); render();
+  };
+
+  const countryPaste = q('#orph-country-paste');
+  if (countryPaste) countryPaste.oninput = () => { orphanCountryPaste = countryPaste.value; };
+  const countrySave = q('[data-orph-country-save]');
+  if (countrySave) countrySave.onclick = () => {
+    const text = orphanCountryPaste !== null ? orphanCountryPaste : '';
+    o.countryExtra = text.split('\n').map(l => l.split(/\t|,/).map(s => s.trim())).filter(p => p[0] && p[1]).map(p => [p[0], p[1], p[2] || '']);
+    orphanCountryPaste = null;
+    saveState(); render(); showToast('Countries saved');
   };
 }
 
