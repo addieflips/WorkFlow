@@ -6051,11 +6051,14 @@ const ORPHAN_STATUS = {
   noleader:     { label:'No eligible leader in country – place by hand', tone:'bad' },
 };
 
-function orphanPlaced(rows){ return rows.filter(r => r.status === 'ready' || r.status === 'retail'); }
+// Retail customers are split out first (SOP Phase 3, step 6), then everyone else.
+function orphanRetailFirst(rows){ return [...rows.filter(r => r.status === 'retail'), ...rows.filter(r => r.status !== 'retail')]; }
+function orphanPlaced(rows){ return orphanRetailFirst(rows.filter(r => r.status === 'ready' || r.status === 'retail')); }
 function orphanLeaderIdOf(r){ return r.status === 'retail' ? '12' : (r.leader ? r.leader.id : ''); }
 function orphanLeaderNameOf(r){ return r.status === 'retail' ? 'Retail Customer' : (r.leader ? r.leader.name : ''); }
 
 function orphanTsv(rows, kind){
+  rows = orphanRetailFirst(rows);
   if (kind === 'orphanIds') return rows.map(r => r.id).join('\n');
   if (kind === 'leaderIds') return rows.map(orphanLeaderIdOf).join('\n');
   if (kind === 'leaderNames') return rows.map(orphanLeaderNameOf).join('\n');
@@ -6301,11 +6304,11 @@ function viewOrphans(){
           <label class="section" style="margin:0;">3. Results</label>
           ${orphanCopyButtons('data-orph-copy')}
         </div>
-        <div class="hint" style="margin:0 0 10px;">Each button copies one column for the Ready tab (only Ready and retail rows, always in the same order), so you can paste them one column at a time and they line up. Change a leader with the dropdown; the others re-match around it.</div>
+        <div class="hint" style="margin:0 0 10px;">Each button copies one column for the Ready tab: retail customers first, then everyone else, always in the same order, so you can paste one column at a time and they line up. Change a leader with the dropdown; the others re-match around it.</div>
         <div class="orph-table-wrap">
           <table class="orph-table">
             <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th></tr></thead>
-            <tbody>${rows.map(orphanRow).join('')}</tbody>
+            <tbody>${orphanRetailFirst(rows).map(orphanRow).join('')}</tbody>
           </table>
         </div>
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
