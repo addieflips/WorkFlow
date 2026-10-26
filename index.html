@@ -5865,6 +5865,7 @@ function orphanData(){
   if (!o.leadersUpdated) o.leadersUpdated = {};
   if (!Array.isArray(o.pullLog)) o.pullLog = [];        // { date, tab, placed }
   if (!o.places) o.places = {};                         // key -> [lat, lon]
+  if (!o.placesV2) { Object.keys(o.places).forEach(k => { if (k.startsWith('chk:')) delete o.places[k]; }); o.placesV2 = true; }
   if (!Array.isArray(o.countryExtra)) o.countryExtra = [];
   if (!o.batch) o.batch = { orphans: [], overrides: {}, inboxes: {}, tabOverride: '' };
   if (!o.batch.overrides) o.batch.overrides = {};
@@ -5924,7 +5925,7 @@ function orphanCoords(row, match){
 }
 
 // Lookup keys for a leader: city first, postal code for zip-code countries.
-// l = [id, name, match, city, lat, lon, count, tab, postal]
+// l = [id, name, match, city, lat, lon, count, tab, postal, state]
 function orphanLeaderKeys(l){
   const m = orphanNorm(l[2]);
   const cityKey = l[3] ? orphanNorm(l[3]) + '|' + m : '';
@@ -5953,12 +5954,27 @@ function orphanCountryMedians(){
   return map;
 }
 
+// Far from the middle of the country is only suspicious when no other leader
+// in that country is nearby: Hawaii, Alaska and Guam have neighbours, a
+// Brazilian leader placed in California does not.
+const __orphanLoners = new WeakMap();
 function orphanLeaderSuspect(l){
   const lat = orphanNum(l[4]), lon = orphanNum(l[5]);
   if (isNaN(lat) || isNaN(lon)) return false;
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return true;
   const mid = orphanCountryMedians().get(l[2]);
-  return !!mid && haversineMiles([lat, lon], mid) > 2500;
+  if (!mid || haversineMiles([lat, lon], mid) <= 2500) return false;
+  const leaders = orphanData().leaders;
+  let memo = __orphanLoners.get(leaders);
+  if (!memo || memo.n !== leaders.length) { memo = { n: leaders.length, seen: new Map() }; __orphanLoners.set(leaders, memo); }
+  const key = l[2] + '|' + lat + '|' + lon;
+  if (memo.seen.has(key)) return memo.seen.get(key);
+  const lonely = !leaders.some(o => o !== l && o[2] === l[2] && o[0] !== l[0] && (() => {
+    const a = orphanNum(o[4]), b = orphanNum(o[5]);
+    return !isNaN(a) && !isNaN(b) && haversineMiles([lat, lon], [a, b]) <= 300;
+  })());
+  memo.seen.set(key, lonely);
+  return lonely;
 }
 
 function orphanZipCountry(match){ return ORPHAN_ZIP_COUNTRIES.includes(match); }
@@ -5975,12 +5991,15 @@ function orphanLeaderCheckParams(l){
   if (l[2] === 'United States') zip = zip.split('-')[0];
   const p = { country: l[2] };
   if (l[3]) p.city = l[3];
+  if (l[9]) p.state = l[9];
   if (zip) p.postalcode = zip;
   return p;
 }
+// v2: postal code first. Earlier checks matched by town name and could land
+// in a namesake town (Altoona, PA for Altoona, WI), so they are not reused.
 function orphanLeaderCheckKey(l){
   const p = orphanLeaderCheckParams(l);
-  return 'chk:' + orphanNorm(p.city) + '|' + orphanNorm(p.postalcode) + '|' + orphanNorm(l[2]);
+  return 'chk2:' + orphanNorm(p.city) + '|' + orphanNorm(p.state) + '|' + orphanNorm(p.postalcode) + '|' + orphanNorm(l[2]);
 }
 
 // Where a leader is, and how sure we are. A looked-up location more than
@@ -6102,7 +6121,7 @@ function parseBiLeaderList(text){
     let country = c[8];
     if (orphanCountry(country).match === 'CHECK COUNTRY' && c[3] && !/\d/.test(c[3])) country = c[3];
     const postal = c[7] || (/^[A-Z0-9-]{3,8}$/i.test(c[3]) ? c[3] : '');
-    return { id: c[0], name: '', country, city: c[5], lat: c[11], lon: c[12], count: 0, postal };
+    return { id: c[0], name: '', country, city: c[5], state: c[6], lat: c[11], lon: c[12], count: 0, postal };
   });
 }
 
@@ -6378,12 +6397,23 @@ function orphanCountryCheckJobs(country){
 
 const orphanSleep = ms => new Promise(r => setTimeout(r, ms));
 
+// The geocoder wants state names, not the two-letter codes the lists use.
+const ORPHAN_STATE_NAMES = {
+  'Brazil': { AC:'Acre', AL:'Alagoas', AP:'Amapá', AM:'Amazonas', BA:'Bahia', CE:'Ceará', DF:'Distrito Federal', ES:'Espírito Santo', GO:'Goiás', MA:'Maranhão', MT:'Mato Grosso', MS:'Mato Grosso do Sul', MG:'Minas Gerais', PA:'Pará', PB:'Paraíba', PR:'Paraná', PE:'Pernambuco', PI:'Piauí', RJ:'Rio de Janeiro', RN:'Rio Grande do Norte', RS:'Rio Grande do Sul', RO:'Rondônia', RR:'Roraima', SC:'Santa Catarina', SP:'São Paulo', SE:'Sergipe', TO:'Tocantins' },
+  'United States': { AL:'Alabama', AK:'Alaska', AZ:'Arizona', AR:'Arkansas', CA:'California', CO:'Colorado', CT:'Connecticut', DE:'Delaware', DC:'District of Columbia', FL:'Florida', GA:'Georgia', HI:'Hawaii', ID:'Idaho', IL:'Illinois', IN:'Indiana', IA:'Iowa', KS:'Kansas', KY:'Kentucky', LA:'Louisiana', ME:'Maine', MD:'Maryland', MA:'Massachusetts', MI:'Michigan', MN:'Minnesota', MS:'Mississippi', MO:'Missouri', MT:'Montana', NE:'Nebraska', NV:'Nevada', NH:'New Hampshire', NJ:'New Jersey', NM:'New Mexico', NY:'New York', NC:'North Carolina', ND:'North Dakota', OH:'Ohio', OK:'Oklahoma', OR:'Oregon', PA:'Pennsylvania', RI:'Rhode Island', SC:'South Carolina', SD:'South Dakota', TN:'Tennessee', TX:'Texas', UT:'Utah', VT:'Vermont', VA:'Virginia', WA:'Washington', WV:'West Virginia', WI:'Wisconsin', WY:'Wyoming', PR:'Puerto Rico', GU:'Guam' },
+  'Canada': { AB:'Alberta', BC:'British Columbia', MB:'Manitoba', NB:'New Brunswick', NL:'Newfoundland and Labrador', NS:'Nova Scotia', NT:'Northwest Territories', NU:'Nunavut', ON:'Ontario', PE:'Prince Edward Island', QC:'Quebec', SK:'Saskatchewan', YT:'Yukon' },
+};
+function orphanStateName(country, st){
+  const m = ORPHAN_STATE_NAMES[country];
+  return (m && m[String(st || '').trim().toUpperCase()]) || st;
+}
+
 // Most specific first; OpenStreetMap allows one request per second.
 async function orphanGeocodeBest(params){
+  // A postal code is unique within a country; a town name often is not.
   const tries = [];
-  if (params.city && params.postalcode) tries.push({ city: params.city, postalcode: params.postalcode, country: params.country });
   if (params.postalcode) tries.push({ postalcode: params.postalcode, country: params.country });
-  if (params.city && params.state) tries.push({ city: params.city, state: params.state, country: params.country });
+  if (params.city && params.state) tries.push({ city: params.city, state: orphanStateName(params.country, params.state), country: params.country });
   if (params.city) tries.push({ city: params.city, country: params.country });
   for (let i = 0; i < tries.length; i++) {
     if (i) await orphanSleep(1100);
@@ -6406,7 +6436,7 @@ async function runOrphanGeoJobs(jobs, label){
     else {
       orphanGeo.failed.push(params.city || params.postalcode);
       // Remember a clean miss for leader checks so it isn't asked again.
-      if (hit === null && key.startsWith('chk:')) places[key] = [];
+      if (hit === null && key.startsWith('chk2:')) places[key] = [];
     }
     orphanGeo.done++;
     render();
@@ -6602,7 +6632,7 @@ const ORPHAN_LOC_STATUS = {
   zip:      { label: 'Matched by zip code', tone: 'ok' },
   off:      { label: 'List lat/lon is off — using looked-up', tone: 'warn' },
   suspect:  { label: 'Lat/lon outside the country — not used', tone: 'bad' },
-  missing:  { label: 'No lat/lon — not used', tone: 'bad' },
+  missing:  { label: 'No lat/lon — click Check to look it up', tone: 'bad' },
   notfound: { label: 'Not found — type lat/lon', tone: 'bad' },
   nozip:    { label: 'No postal code — not used', tone: 'bad' },
 };
@@ -6842,7 +6872,7 @@ function attachOrphanHandlers(){
       if (!confirm(`Replace ${tabs.map(t => `the ${t} tab with ${found[t].length} leaders`).join(' and ')}?`)) return;
       orphanError = '';
       tabs.forEach(t => {
-        o.leaders = [...o.leaders.filter(l => l[7] !== t), ...found[t].map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, 0, t, r.postal || ''])];
+        o.leaders = [...o.leaders.filter(l => l[7] !== t), ...found[t].map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, 0, t, r.postal || '', r.state || ''])];
         o.leadersUpdated[t] = new Date().toLocaleDateString('en-US');
       });
       saveState(); render();
@@ -7019,7 +7049,7 @@ function attachOrphanHandlers(){
       if (parsed.missing.length) { orphanError = 'Could not read that leader list. Paste it straight from the leader list, or include a header row with: ' + parsed.missing.join(', ') + '.'; render(); return; }
       rows = parsed.rows;
     }
-    const list = rows.filter(r => r.id).map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, Number(r.count) || 0, tab, r.postal || '']);
+    const list = rows.filter(r => r.id).map(r => [r.id, r.name, orphanCountry(r.country).match, r.city, r.lat, r.lon, Number(r.count) || 0, tab, r.postal || '', r.state || '']);
     if (!list.length) { orphanError = 'No leaders found in that paste. Include the header row.'; render(); return; }
     if (!confirm(`Replace the ${tab} tab with ${list.length} leaders?`)) return;
     orphanError = '';
