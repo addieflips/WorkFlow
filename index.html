@@ -6299,15 +6299,26 @@ function viewOrphans(){
           </div>` : ''}
       </div>
 
+      ${count('retail') ? `
+        <div class="card" style="margin-bottom:16px;">
+          <label class="section">3. Retail customers first · ${count('retail')}</label>
+          <div class="hint" style="margin:0 0 10px;">These skip leader assignment. Copy them into the bottom of Ready (enroller 12, Retail Customer), then remove them so only the leader matches are left.</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            ${[['orphanIds','Orphan IDs'], ['leaderIds','Enroller IDs (12)'], ['leaderNames','Enroller name'], ['country','Countries'], ['table','Whole table']].map(([k, l]) =>
+              `<button data-orph-copy-retail="${k}" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} ${l}</button>`).join('')}
+            <button data-orph-remove-retail class="btn btn-primary" style="padding:6px 12px; font-size:13px;">${icon('trash',13)} Remove retail customers</button>
+          </div>
+        </div>` : ''}
+
       <div class="card" style="margin-bottom:16px;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-          <label class="section" style="margin:0;">3. Results</label>
+          <label class="section" style="margin:0;">${count('retail') ? '4' : '3'}. Leader matches</label>
           ${orphanCopyButtons('data-orph-copy')}
         </div>
-        <div class="hint" style="margin:0 0 10px;">Each button copies one column for the Ready tab: retail customers first, then everyone else, always in the same order, so you can paste one column at a time and they line up. Change a leader with the dropdown; the others re-match around it.</div>
+        <div class="hint" style="margin:0 0 10px;">Each button copies one column for the Ready tab (matched orphans only, always in the same order), so you can paste one column at a time and they line up. Change a leader with the dropdown; the others re-match around it. Use the trash button at the end of a row to delete it, such as a test account.</div>
         <div class="orph-table-wrap">
           <table class="orph-table">
-            <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th></tr></thead>
+            <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th><th></th></tr></thead>
             <tbody>${orphanRetailFirst(rows).map(orphanRow).join('')}</tbody>
           </table>
         </div>
@@ -6357,6 +6368,7 @@ function orphanRow(r){
       <td>${r.miles == null ? '' : r.miles}</td>
       <td>${escapeHtml(r.inbox || (r.status==='ready' ? '?' : ''))}</td>
       <td><span class="orph-pill orph-pill-${st.tone}">${escapeHtml(st.label)}</span></td>
+      <td><button data-orph-del="${escapeAttr(r.id)}" class="icon-btn danger" style="width:26px; height:26px;" title="Delete this row">${icon('trash',13)}</button></td>
     </tr>`;
 }
 
@@ -6484,11 +6496,29 @@ function attachOrphanHandlers(){
   });
 
   all('[data-orph-copy]', el => el.onclick = () => {
-    const placed = orphanPlaced(computeOrphanResults());
-    orphanCopy(orphanTsv(placed, el.getAttribute('data-orph-copy')), placed.length + ' rows copied');
+    const matched = computeOrphanResults().filter(r => r.status === 'ready');
+    orphanCopy(orphanTsv(matched, el.getAttribute('data-orph-copy')), matched.length + ' rows copied');
+  });
+  all('[data-orph-copy-retail]', el => el.onclick = () => {
+    const retail = computeOrphanResults().filter(r => r.status === 'retail');
+    orphanCopy(orphanTsv(retail, el.getAttribute('data-orph-copy-retail')), retail.length + ' retail rows copied');
+  });
+  const removeRetail = q('[data-orph-remove-retail]');
+  if (removeRetail) removeRetail.onclick = () => {
+    const ids = new Set(computeOrphanResults().filter(r => r.status === 'retail').map(r => r.id));
+    if (!confirm(`Remove ${ids.size} retail customer${ids.size===1?'':'s'}? Copy them into Ready first.`)) return;
+    o.batch.orphans = o.batch.orphans.filter(r => !ids.has(r.id));
+    saveState(); render();
+  };
+  all('[data-orph-del]', el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-del');
+    if (!confirm('Delete orphan ' + id + ' from this list?')) return;
+    o.batch.orphans = o.batch.orphans.filter(r => r.id !== id);
+    delete o.batch.overrides[id];
+    saveState(); render(); showToast('Row ' + id + ' deleted');
   });
   all('[data-orph-copy-last]', el => el.onclick = () => {
-    const rows = (o.lastFinished && o.lastFinished.rows) || [];
+    const rows = ((o.lastFinished && o.lastFinished.rows) || []).filter(r => r.leader);
     orphanCopy(orphanTsv(rows, el.getAttribute('data-orph-copy-last')), rows.length + ' rows copied');
   });
 
