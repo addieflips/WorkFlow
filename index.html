@@ -6064,6 +6064,8 @@ function orphanTsv(rows, kind){
   if (kind === 'leaderNames') return rows.map(orphanLeaderNameOf).join('\n');
   if (kind === 'inbox') return rows.map(r => r.inbox).join('\n');
   if (kind === 'country') return rows.map(r => r.match).join('\n');
+  // One block for Ready: orphan ID, leader ID and full country name side by side.
+  if (kind === 'ready') return rows.map(r => [r.id, orphanLeaderIdOf(r), r.match].join('\t')).join('\n');
   const head = ['Orphan ID','Orphan Name','Country','Leader ID (enroller)','Leader Name','Distance (miles)','Inbox','Assigned date'];
   const date = new Date().toLocaleDateString('en-US');
   return [head, ...rows.map(r => [r.id, r.name, r.match, orphanLeaderIdOf(r), orphanLeaderNameOf(r), r.miles == null ? '' : r.miles, r.inbox, date])]
@@ -6302,11 +6304,12 @@ function viewOrphans(){
       ${count('retail') ? `
         <div class="card" style="margin-bottom:16px;">
           <label class="section">3. Retail customers first · ${count('retail')}</label>
-          <div class="hint" style="margin:0 0 10px;">These skip leader assignment. Copy them into the bottom of Ready (enroller 12, Retail Customer), then remove them so only the leader matches are left.</div>
+          <div class="hint" style="margin:0 0 10px;">These skip leader assignment. <b>Copy IDs + countries</b> gives Orphan ID, 12 and Country side by side for the bottom of Ready. Then remove them so only the leader matches are left.</div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <button data-orph-copy-retail="ready" class="btn btn-primary" style="padding:6px 12px; font-size:13px;">${icon('copy',13)} Copy IDs + countries</button>
             ${[['orphanIds','Orphan IDs'], ['leaderIds','Enroller IDs (12)'], ['leaderNames','Enroller name'], ['country','Countries'], ['table','Whole table']].map(([k, l]) =>
               `<button data-orph-copy-retail="${k}" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} ${l}</button>`).join('')}
-            <button data-orph-remove-retail class="btn btn-primary" style="padding:6px 12px; font-size:13px;">${icon('trash',13)} Remove retail customers</button>
+            <button data-orph-remove-retail class="btn btn-ghost" style="padding:6px 12px; font-size:13px; color:#B0352B;">${icon('trash',13)} Remove retail customers</button>
           </div>
         </div>` : ''}
 
@@ -6315,7 +6318,7 @@ function viewOrphans(){
           <label class="section" style="margin:0;">${count('retail') ? '4' : '3'}. Leader matches</label>
           ${orphanCopyButtons('data-orph-copy')}
         </div>
-        <div class="hint" style="margin:0 0 10px;">Each button copies one column for the Ready tab (matched orphans only, always in the same order), so you can paste one column at a time and they line up. Change a leader with the dropdown; the others re-match around it. Use the trash button at the end of a row to delete it, such as a test account.</div>
+        <div class="hint" style="margin:0 0 10px;"><b>Copy IDs + countries</b> copies Orphan ID, Leader ID and Country (full name) side by side, ready to paste in one go. The other buttons copy one column each. Matched orphans only, always in the same order. Change a leader with the dropdown; the others re-match around it. Use the trash button at the end of a row to delete it, such as a test account.</div>
         <div class="orph-table-wrap">
           <table class="orph-table">
             <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th><th></th></tr></thead>
@@ -6342,7 +6345,9 @@ function viewOrphans(){
 
 function orphanCopyButtons(attr){
   const btns = [['orphanIds','Orphan IDs'], ['leaderIds','Leader IDs'], ['leaderNames','Leader names'], ['inbox','Inboxes'], ['country','Countries'], ['table','Whole table']];
-  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${btns.map(([k, l]) =>
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button ${attr}="ready" class="btn btn-primary" style="padding:6px 12px; font-size:13px;" title="Orphan ID, Leader ID and Country, side by side">${icon('copy',13)} Copy IDs + countries</button>
+    ${btns.map(([k, l]) =>
     `<button ${attr}="${k}" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} ${l}</button>`).join('')}</div>`;
 }
 
