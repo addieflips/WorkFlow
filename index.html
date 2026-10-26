@@ -6126,6 +6126,7 @@ const ORPHAN_FIELDS = [
   { key:'postal',  label:'Postal code', re:/postal|zip/i, prio:1 },
   { key:'lat',     label:'Lat',       re:/^lat/i, prio:1 },
   { key:'lon',     label:'Lon',       re:/^(lon|lng)/i, prio:1 },
+  { key:'email',   label:'Email',     re:/e-?mail/i, prio:1 },
 ];
 const LEADER_FIELDS = [
   { key:'id',      label:'Leader ID', re:/(^|[\s_])id$|^id\b|^(distributor|member|leader|enroller|orphan|wa|account)[ _]?(number|no\.?|#)$/i, required:true, prio:5 },
@@ -6298,12 +6299,14 @@ const CONTACT_FIELDS = [
 
 // Retail customers are already in the 12 Retail tree and get no email, nor
 // does anyone listed as already placed.
-function orphanEmailRows(){
+let orphanEmailIncludeSent = false;   // also export orphans already exported today
+
+function orphanEmailRows(includeSent){
   const f = orphanData().lastFinished;
   if (!f) return [];
   const skip = new Set(String(f.skip || '').split(/[\s,]+/).filter(Boolean));
   const contacts = f.contacts || {};
-  return f.rows.filter(r => r.leader && !skip.has(r.id)).map(r => {
+  return f.rows.filter(r => r.leader && !skip.has(r.id) && (includeSent || !r.exported)).map(r => {
     const oc = contacts[r.id] || {}, lc = contacts[r.leader.id] || {};
     return {
       inbox: r.inbox || 'No inbox',
@@ -6311,34 +6314,44 @@ function orphanEmailRows(){
       enrollerEmail: lc.email || '',
       orphanId: r.id,
       orphanName: oc.name || r.name || '',
-      orphanEmail: oc.email || '',
+      orphanEmail: oc.email || r.email || '',
       leaderId: r.leader.id,
+      exported: r.exported || '',
     };
   });
 }
 
-function orphanCsv(rows){
-  const cell = v => /[",\n]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
-  // "Email" is the enroller's address so Word picks it up for the enroller template.
-  const head = ['Enroller Name','Email','Orphan ID','Orphan Name','Orphan Email'];
-  return '﻿' + [head, ...rows.map(r => [r.enrollerName, r.enrollerEmail || 'NA', r.orphanId, r.orphanName, r.orphanEmail || 'NA'])]
-    .map(c => c.map(cell).join(',')).join('\r\n');
+// Inbox tabs in the order the team sends them; any other inbox follows.
+const ORPHAN_INBOX_ORDER = ['Europe', 'Spanish', 'Portuguese', 'Placements'];
+function orphanInboxSort(a, b){
+  const ia = ORPHAN_INBOX_ORDER.indexOf(a), ib = ORPHAN_INBOX_ORDER.indexOf(b);
+  return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
 }
 
-function orphanDownload(name, text){
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
-  const a = document.createElement('a');
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+// One workbook, one tab per inbox, columns as the mail merge expects them.
+// "Email" is the enroller's address, so Word picks it up for the enroller template.
+async function orphanExportEmails(rows){
+  const XLSX = await orphanLoadXlsx();
+  const wb = XLSX.utils.book_new();
+  const inboxes = [...new Set(rows.map(r => r.inbox))].sort(orphanInboxSort);
+  inboxes.forEach(inbox => {
+    const aoa = [['Enroller Name', 'Orphan ID', 'Orphan Name', 'Orphan Email', 'Email'],
+      ...rows.filter(r => r.inbox === inbox).map(r => [r.enrollerName, /^\d+$/.test(r.orphanId) ? Number(r.orphanId) : r.orphanId, r.orphanName, r.orphanEmail || 'NA', r.enrollerEmail || 'NA'])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 28 }, { wch: 32 }, { wch: 32 }];
+    XLSX.utils.book_append_sheet(wb, ws, inbox.slice(0, 31));
+  });
+  const d = new Date();
+  XLSX.writeFile(wb, `Orphan emails ${d.getMonth() + 1}-${d.getDate()}-${d.getFullYear()}.xlsx`);
 }
 
 let orphanContactPaste = '';
 
 function orphanEmailPanel(){
   const f = orphanData().lastFinished;
-  const rows = orphanEmailRows();
-  if (!rows.length && !f.skip) return '';
+  const rows = orphanEmailRows(orphanEmailIncludeSent);
+  const sentCount = orphanEmailRows(true).length - orphanEmailRows(false).length;
+  if (!orphanEmailRows(true).length && !f.skip) return '';
   const haveContacts = Object.keys(f.contacts || {}).length > 0;
   const byInbox = new Map();
   rows.forEach(r => { if (!byInbox.has(r.inbox)) byInbox.set(r.inbox, []); byInbox.get(r.inbox).push(r); });
@@ -6349,7 +6362,7 @@ function orphanEmailPanel(){
   return `
     <div class="role-block">
       <div style="font-weight:600; font-size:14px; margin-bottom:4px;">Mass emails</div>
-      <div class="hint" style="margin:0 0 10px;">Do this once every pull for the day is finished. Retail customers are left out.</div>
+      <div class="hint" style="margin:0 0 10px;">After each pull. Retail customers are left out, and orphans already exported today aren't exported again.</div>
 
       <div class="field" style="margin-bottom:10px;">
         <label class="hint" style="display:block; margin:0 0 4px;">Orphan IDs to leave out (already placed before you got to them)</label>
@@ -6357,23 +6370,27 @@ function orphanEmailPanel(){
       </div>
 
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-        <span class="subtle" style="font-size:13px;"><b>a.</b> Copy every orphan and enroller ID, paste into the BI Distributor List, and download it as Excel (not CSV).</span>
+        <span class="subtle" style="font-size:13px;"><b>a.</b> Copy the enroller (and orphan) IDs, run them through the BI Distributor List, and download it as Excel (not CSV).</span>
         <button data-orph-copy-bi class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} IDs for BI</button>
       </div>
-      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Paste the BI rows here, header row included (ID, name, email). Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}</div>
+      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Upload that BI file, or paste its rows with the header row (ID, name, email). Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
+        <label class="btn btn-ghost" style="padding:7px 12px; cursor:pointer;">${icon('folder',14)} Upload BI Excel file<input type="file" data-orph-contact-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
+        <span class="subtle" style="font-size:13px;">or paste:</span>
+      </div>
       <textarea id="orph-contact-paste" rows="3" placeholder="Paste from the BI download">${escapeHtml(orphanContactPaste)}</textarea>
-      <button data-orph-contacts-load class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load contacts</button>
+      <button data-orph-contacts-load class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load pasted contacts</button>
 
       ${haveContacts ? `
         ${missing.length ? `<div class="orph-geo" style="display:block;"><b>${missing.length} missing email${missing.length===1?'':'s'}</b>. Check DataTrax; if there's still none, they go out as NA. ${escapeHtml(missing.join(', '))}</div>` : ''}
-        <div class="subtle" style="font-size:13px; margin:14px 0 6px;"><b>c.</b> Download one recipient file per inbox, save it to the desktop, and close it before Word uses it. Enroller template: To = <b>Email</b>. Orphan template: To = <b>Orphan Email</b>.</div>
-        <div style="display:flex; flex-direction:column; gap:6px;">
-          ${[...byInbox.entries()].sort((a,b) => a[0].localeCompare(b[0])).map(([inbox, list]) => `
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:10px;">
-              <span style="font-weight:600; font-size:13.5px;">${escapeHtml(inbox)} <span class="subtle" style="font-weight:400;">· ${list.length} email${list.length===1?'':'s'} per template</span></span>
-              <button data-orph-download="${escapeAttr(inbox)}" class="btn btn-ghost" style="padding:5px 11px; font-size:13px;">Download ${escapeHtml(inbox)} Orphans.csv</button>
-            </div>`).join('')}
-        </div>
+        <div class="subtle" style="font-size:13px; margin:14px 0 6px;"><b>c.</b> Export the email file: one Excel file with a tab per inbox (Enroller Name, Orphan ID, Orphan Name, Orphan Email, Email). Save it to the desktop and close it before Word uses it. Enroller template: To = <b>Email</b>. Orphan template: To = <b>Orphan Email</b>.</div>
+        ${rows.length ? `
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+            ${[...byInbox.entries()].sort((a, b) => orphanInboxSort(a[0], b[0])).map(([inbox, list]) => `<span class="orph-pill" style="font-size:12.5px;">${escapeHtml(inbox)} · ${list.length}</span>`).join('')}
+          </div>
+          <button data-orph-export class="btn btn-primary" style="padding:8px 14px;">${icon('folder',14)} Export email file (${rows.length} orphan${rows.length===1?'':'s'})</button>`
+        : `<div class="subtle" style="font-size:13px;">Everything placed today has been exported. Finish another pull to export its orphans.</div>`}
+        ${sentCount ? `<label class="subtle" style="font-size:13px; display:flex; align-items:center; gap:6px; margin-top:8px; cursor:pointer;"><input type="checkbox" data-orph-email-sent ${orphanEmailIncludeSent ? 'checked' : ''} style="width:auto;" /> Include the ${sentCount} already exported today</label>` : ''}
         <div class="hint">Check the default inbox three times before every send. Never send from Exceptions.</div>
       ` : ''}
     </div>`;
@@ -7011,7 +7028,7 @@ function attachOrphanHandlers(){
   if (skipInput) skipInput.onchange = () => { o.lastFinished.skip = skipInput.value; saveState(); render(); };
   const biBtn = q('[data-orph-copy-bi]');
   if (biBtn) biBtn.onclick = () => {
-    const rows = orphanEmailRows();
+    const rows = orphanEmailRows(orphanEmailIncludeSent);
     const ids = [...new Set(rows.flatMap(r => [r.orphanId, r.leaderId]))];
     orphanCopy(ids.join('\n'), ids.length + ' IDs copied for BI');
   };
@@ -7024,7 +7041,7 @@ function attachOrphanHandlers(){
     const contacts = o.lastFinished.contacts = o.lastFinished.contacts || {};
     let n = 0;
     rows.filter(r => r.id).forEach(r => {
-      const name = [r.first, r.last].filter(Boolean).join(' ') || r.name;
+      const name = r.first && r.last ? `${r.last}, ${r.first}` : (r.name || [r.last, r.first].filter(Boolean).join(', '));
       contacts[r.id] = { name, email: /@/.test(r.email) ? r.email : '' };
       n++;
     });
@@ -7032,10 +7049,31 @@ function attachOrphanHandlers(){
     orphanError = ''; orphanContactPaste = '';
     saveState(); render(); showToast(n + ' contacts loaded');
   };
-  all('[data-orph-download]', el => el.onclick = () => {
-    const inbox = el.getAttribute('data-orph-download');
-    orphanDownload(inbox + ' Orphans.csv', orphanCsv(orphanEmailRows().filter(r => r.inbox === inbox)));
-  });
+  const exportBtn = q('[data-orph-export]');
+  if (exportBtn) exportBtn.onclick = async () => {
+    const rows = orphanEmailRows(orphanEmailIncludeSent);
+    try { await orphanExportEmails(rows); }
+    catch (e) { orphanError = e.message || 'Could not build the email file.'; render(); return; }
+    // So the next pull's export holds only its own orphans.
+    const ids = new Set(rows.map(r => r.orphanId));
+    o.lastFinished.rows.forEach(r => { if (ids.has(r.id) && !r.exported) r.exported = todayKey(); });
+    orphanEmailIncludeSent = false;
+    saveState(); render(); showToast(rows.length + ' orphans exported');
+  };
+  const sentBox = q('[data-orph-email-sent]');
+  if (sentBox) sentBox.onchange = () => { orphanEmailIncludeSent = sentBox.checked; render(); };
+  const contactFile = q('[data-orph-contact-file]');
+  if (contactFile) contactFile.onchange = async () => {
+    const file = contactFile.files[0];
+    if (!file) return;
+    try {
+      const sheets = await orphanReadWorkbook(file);
+      orphanContactPaste = Object.values(sheets).sort((x, y) => y.split('\n').length - x.split('\n').length)[0] || '';
+      render();
+      const btn = document.querySelector('[data-orph-contacts-load]');
+      if (btn) btn.click();
+    } catch (e) { orphanError = e.message || 'Could not read that file.'; render(); }
+  };
 
   const locBtn = q('[data-orph-loc]');
   if (locBtn) locBtn.onclick = () => { orphanLocOpen = !orphanLocOpen; render(); };
@@ -7097,7 +7135,7 @@ function attachOrphanHandlers(){
     o.lastFinished = {
       date: todayKey(), tab: orphanTabToday(),
       rows: [...(sameDay ? o.lastFinished.rows : []),
-        ...placed.map(r => ({ id: r.id, name: r.name, match: r.match, status: r.status, leader: r.leader ? { id: r.leader.id, name: r.leader.name } : null, miles: r.miles, inbox: r.inbox }))],
+        ...placed.map(r => ({ id: r.id, name: r.name, email: r.email || '', match: r.match, status: r.status, leader: r.leader ? { id: r.leader.id, name: r.leader.name } : null, miles: r.miles, inbox: r.inbox }))],
       contacts: sameDay ? (o.lastFinished.contacts || {}) : {},
       skip: sameDay ? (o.lastFinished.skip || '') : '',
     };
