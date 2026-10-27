@@ -155,6 +155,7 @@
   .orph-stat-lbl{ font-size:12.5px; color:var(--muted); font-weight:600; margin-top:2px; }
   .orph-alert{ margin-bottom:16px; background:#FDECEA; border-color:#F5C6C1; color:#9E2B22; font-size:13.5px; padding:12px 16px; }
   .orph-geo{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:14px; padding:10px 12px; border-radius:10px; background:#FDF4E1; color:#8A5A0B; font-size:13.5px; }
+  .orph-ok{ padding:10px 12px; border-radius:10px; background:#E6F4EA; color:#1E7B3A; font-size:13.5px; }
   .orph-table-wrap{ overflow-x:auto; margin:0 -4px; }
   .orph-table{ width:100%; border-collapse:collapse; font-size:13px; }
   .orph-table th{ text-align:left; font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; padding:6px 6px; border-bottom:1px solid var(--border); white-space:nowrap; }
@@ -6569,16 +6570,19 @@ function viewOrphans(){
       </div>
     </div>
 
+    ${o.batch.orphans.length ? '' : orphanTableauCard()}
+
     <div class="card" style="margin-bottom:16px;">
       <label class="section">1. Paste orphans</label>
       ${o.batch.orphans.length ? `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
           <div class="subtle">${o.batch.orphans.length} orphan${o.batch.orphans.length===1?'':'s'} loaded${o.batch.source ? ' from ' + escapeHtml(o.batch.source) : ''}${o.batch.loadedAt ? ' at ' + escapeHtml(o.batch.loadedAt) : ''}.${o.batch.dropped ? ` Removed automatically: ${escapeHtml(o.batch.dropped)}.` : ''}</div>
           ${o.batch.columns ? `<div class="hint" style="flex-basis:100%; margin:0;">Columns read: ${escapeHtml(o.batch.columns)}</div>` : ''}
+          ${o.batch.tableauCheck ? `<div class="${o.batch.tableauOk ? 'orph-ok' : 'orph-geo'}" style="flex-basis:100%; margin:0;">${escapeHtml(o.batch.tableauCheck)}</div>` : ''}
           <button data-orph-clear class="btn btn-ghost" style="padding:7px 12px;">${icon('trash',14)} Clear and paste new</button>
         </div>
       ` : `
-        <div class="hint" style="margin:0 0 8px;">Upload the BI Distributor List download (after the Tableau date filter), or copy its rows including the header row. It needs ID, Name, Type, City, State, Country and Postal code columns. Test accounts and Australia, China, India, Japan, Korea and New Zealand are removed automatically; retail customers are split out.</div>
+        <div class="hint" style="margin:0 0 8px;">Upload the BI Distributor List download for those IDs, or copy its rows including the header row. It needs ID, Name, Type, City, State, Country and Postal code columns. Test accounts and Australia, China, India, Japan, Korea and New Zealand are removed automatically; retail customers are split out.</div>
         <textarea id="orph-paste" rows="5" placeholder="Paste from Excel here">${escapeHtml(orphanPaste)}</textarea>
         <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
           <button data-orph-load class="btn btn-primary" style="padding:8px 14px;">Load pasted orphans</button>
@@ -6893,6 +6897,91 @@ function orphanCopy(text, msg){
   else fallback();
 }
 
+// ---- Tableau "Current Orphan Details" download (SOP Phases 1–2) ----
+const TABLEAU_FIELDS = [
+  { key:'id',        label:'ID',                re:/(^|[\s_])id$|^id\b/i, required:true, prio:5 },
+  { key:'name',      label:'Name',              re:/^name$/i, prio:3 },
+  { key:'market',    label:'Market',            re:/^market$/i, prio:1 },
+  { key:'submarket', label:'Sub Market',        re:/sub\s*-?\s*market/i, prio:1 },
+  { key:'country',   label:'Country',           re:/^country$/i, prio:1 },
+  { key:'status',    label:'Status',            re:/status/i, prio:1 },
+  { key:'type',      label:'Account Type',      re:/account\s*type/i, prio:1 },
+  // "Most Recent Order", not "Most Recent LRP Order"
+  { key:'order',     label:'Most Recent Order', re:/^most\s*recent\s*order/i, required:true, prio:1 },
+];
+
+// Tableau writes dates as text (9/2/2025); Excel may hand back 9/2/25, an
+// ISO date or a serial number. Returns YYYY-MM-DD or ''.
+function orphanParseDate(v){
+  const t = String(v || '').trim();
+  let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  if ((m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/))) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return `${y}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  }
+  if (/^\d{5}(\.\d+)?$/.test(t)) {
+    const d = new Date(Math.round((Number(t) - 25569) * 86400000));
+    return d.toISOString().slice(0, 10);
+  }
+  return '';
+}
+
+// Keeps orphans whose last order falls in the pull's range, then drops what
+// the SOP removes by hand: other markets' orphans, test accounts, inactive.
+function orphanFilterTableau(text, range){
+  const { rows, missing } = parseSheetPaste(text, TABLEAU_FIELDS);
+  if (missing.length) return { error: 'This doesn’t look like the Tableau download. Missing columns: ' + missing.join(', ') + '.' };
+  const all = rows.filter(r => /\d/.test(r.id));
+  const res = { total: all.length, inRange: 0, noDate: 0, removed: {}, ids: [], from: range.from, to: range.to };
+  const why = {};   // id -> reason it shouldn't be pulled (kept in memory only)
+  const drop = (id, reason) => { res.removed[reason] = (res.removed[reason] || 0) + 1; why[id] = reason; };
+  const md = d => String(Number(d.slice(5, 7))) + '/' + String(Number(d.slice(8, 10)));
+  res.europe = all.some(r => /europe/i.test(r.market) || /^eu\b/i.test(r.submarket));
+  all.forEach(r => {
+    const d = orphanParseDate(r.order);
+    if (!d) { res.noDate++; why[r.id] = 'no Most Recent Order date'; return; }
+    if (d < range.from || d > range.to) { why[r.id] = 'last ordered ' + md(d) + (d.slice(0, 4) !== range.to.slice(0, 4) ? '/' + d.slice(0, 4) : ''); return; }
+    res.inRange++;
+    // Exactly "Active": In-Active, Suspended and Terminated are left out.
+    if (r.status && !/^active$/i.test(r.status.trim())) return drop(r.id, r.status.trim() || 'not Active');
+    if (orphanSelfPlacing(r.market) || orphanSelfPlacing(r.country)) return drop(r.id, orphanCountry(orphanSelfPlacing(r.market) ? r.market : r.country).match);
+    if (/\btest\b/i.test(r.name)) return drop(r.id, 'test account');
+    res.ids.push(r.id);
+  });
+  orphanTableauWhy = why;
+  return res;
+}
+
+let orphanTableauWhy = {};
+
+function orphanTableauCard(){
+  const o = orphanData(), range = orphanPullRange(), t = o.batch.tableau;
+  const fmt = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month:'numeric', day:'numeric' }) : '…';
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Check your filtering (optional)</label>
+      <div class="hint" style="margin:0 0 8px;">Upload the Tableau download (Current Orphan Details, Crosstab), filtered or not. The app works out exactly who should be pulled: orders from <b>${fmt(range.from)} to ${fmt(range.to)}</b> (the dates under This pull), Active only, without Australia, China, India, Japan, Korea, New Zealand or test accounts. When you upload your BI file below, it tells you if you missed anyone or included someone you shouldn't have.</div>
+      ${t ? `
+        <div class="subtle" style="font-size:13.5px; margin-bottom:8px;">
+          <b>${t.ids.length} orphan${t.ids.length === 1 ? '' : 's'} to pull</b> from ${escapeHtml(t.file || 'the download')}: ${t.inRange} ordered ${fmt(t.from)}–${fmt(t.to)} out of ${t.total} rows.
+          ${Object.keys(t.removed).length ? `Removed: ${escapeHtml(Object.entries(t.removed).map(([k, n]) => `${n} ${k}`).join(', '))}.` : ''}
+          ${t.noDate ? `${t.noDate} row${t.noDate === 1 ? ' had' : 's had'} no Most Recent Order date and ${t.noDate === 1 ? 'was' : 'were'} skipped.` : ''}
+        </div>
+        ${!t.europe ? `<div class="orph-alert" style="margin:0 0 8px; padding:10px 12px; border-radius:10px;"><b>No Europe orphans in this download.</b> In Tableau, Sub Market EU has probably unchecked itself again: select all, Apply, Play, and download again.</div>` : ''}
+        ${(t.from !== range.from || t.to !== range.to) ? `<div class="orph-geo" style="margin:0 0 8px;">The dates under This pull have changed since this file was read. Upload it again to use ${fmt(range.from)}–${fmt(range.to)}.</div>` : ''}
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button data-orph-tableau-copy class="btn btn-primary" style="padding:8px 14px;" ${t.ids.length ? '' : 'disabled'}>${icon('copy',14)} Copy ${t.ids.length} IDs for BI</button>
+          <label class="btn btn-ghost" style="padding:8px 14px; cursor:pointer;">${icon('folder',15)} Upload a different file<input type="file" data-orph-tableau-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
+        </div>
+        <div class="hint">Use your own filtered list for BI as usual, or copy these. Either way, upload the BI file below and it's checked against this list.</div>
+      ` : `
+        <label class="btn btn-ghost" style="padding:8px 14px; cursor:pointer;" ${range.from ? '' : 'title="Set the From date under This pull first"'}>${icon('folder',15)} Upload Tableau download<input type="file" data-orph-tableau-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
+        ${range.from ? '' : '<div class="hint">Set the From date under This pull first (your first pull has no previous date to start from).</div>'}
+      `}
+    </div>`;
+}
+
 // Shared by paste and upload: read the BI orphan rows and start a new batch.
 function orphanLoadOrphans(text, source){
   const o = orphanData();
@@ -6923,6 +7012,19 @@ function orphanLoadOrphans(text, source){
     orphanPaste = '';
     o.batch.source = source || '';
     o.batch.columns = columns || '';
+    // Check the BI file holds the IDs the Tableau step picked.
+    if (o.batch.tableau && o.batch.tableau.ids.length) {
+      const bi = new Set(list.map(r => String(r.id)));
+      const want = new Set(o.batch.tableau.ids.map(String));
+      const missingIds = [...want].filter(id => !bi.has(id));
+      const extras = list.map(r => String(r.id)).filter(id => !want.has(id));
+      const few = (ids, label) => ids.slice(0, 12).map(label).join(', ') + (ids.length > 12 ? ` and ${ids.length - 12} more` : '');
+      const parts = [];
+      if (missingIds.length) parts.push(`Missed ${missingIds.length} who should be pulled: ${few(missingIds, id => id)}.`);
+      if (extras.length) parts.push(`${extras.length} shouldn’t be pulled: ${few(extras, id => `${id} (${orphanTableauWhy[id] || 'not in the Tableau download'})`)}.`);
+      o.batch.tableauCheck = parts.length ? parts.join(' ') : '✓ Your BI file matches the Tableau list exactly.';
+      o.batch.tableauOk = !parts.length;
+    }
     saveState(); render();
 }
 
@@ -6954,6 +7056,24 @@ function attachOrphanHandlers(){
   if (paste) paste.oninput = () => { orphanPaste = paste.value; };
   const loadBtn = q('[data-orph-load]');
   if (loadBtn) loadBtn.onclick = () => orphanLoadOrphans(orphanPaste);
+  const tableauFile = q('[data-orph-tableau-file]');
+  if (tableauFile) tableauFile.onchange = async () => {
+    const file = tableauFile.files[0];
+    if (!file) return;
+    const range = orphanPullRange();
+    if (!range.from) { orphanError = 'Set the From date under This pull first.'; render(); return; }
+    try {
+      const sheets = await orphanReadWorkbook(file);
+      const text = Object.values(sheets).sort((x, y) => y.split('\n').length - x.split('\n').length)[0] || '';
+      const res = orphanFilterTableau(text, range);
+      if (res.error) { orphanError = res.error; render(); return; }
+      orphanError = '';
+      o.batch.tableau = { ...res, file: file.name };
+      saveState(); render();
+    } catch (e) { orphanError = e.message || 'Could not read that file.'; render(); }
+  };
+  const tableauCopy = q('[data-orph-tableau-copy]');
+  if (tableauCopy) tableauCopy.onclick = () => orphanCopy(o.batch.tableau.ids.join('\n'), o.batch.tableau.ids.length + ' IDs copied for BI');
   const orphFile = q('[data-orph-file]');
   if (orphFile) orphFile.onchange = async () => {
     const file = orphFile.files[0];
