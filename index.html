@@ -6415,7 +6415,7 @@ async function orphanExportEmails(rows){
   XLSX.writeFile(wb, `Orphan emails ${d.getMonth() + 1}-${d.getDate()}-${d.getFullYear()}.xlsx`);
 }
 
-let orphanContactPaste = '';
+let orphanContactPaste = { leaders: '', orphans: '' };  // the two mass-email paste boxes
 
 function orphanEmailPanel(){
   const f = orphanData().lastFinished;
@@ -6440,16 +6440,25 @@ function orphanEmailPanel(){
       </div>
 
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-        <span class="subtle" style="font-size:13px;"><b>a.</b> Copy the enroller (and orphan) IDs, run them through the BI Distributor List, and download it as Excel (not CSV).</span>
-        <button data-orph-copy-bi class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} IDs for BI</button>
+        <span class="subtle" style="font-size:13px;"><b>a.</b> Copy the IDs and run them through the BI Distributor List.</span>
+        <button data-orph-copy-bi="leaders" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} Enroller IDs</button>
+        <button data-orph-copy-bi="orphans" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} Orphan IDs</button>
+        <button data-orph-copy-bi="all" class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} Both</button>
       </div>
-      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Upload that BI file, or paste its rows with the header row (ID, name, email). Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}${haveContacts && f.contactColumns ? `<div class="subtle" style="font-size:12px; margin-top:2px;">Columns read: ${escapeHtml(f.contactColumns)}</div>` : ''}</div>
+      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Paste the enrollers and the orphans in their own boxes (ID, name, email; with or without the header row), or upload one BI file with both. Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}${haveContacts && f.contactColumns ? `<div class="subtle" style="font-size:12px; margin-top:2px;">Columns read: ${escapeHtml(f.contactColumns)}</div>` : ''}</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
         <label class="btn btn-ghost" style="padding:7px 12px; cursor:pointer;">${icon('folder',14)} Upload BI Excel file<input type="file" data-orph-contact-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
-        <span class="subtle" style="font-size:13px;">or paste:</span>
       </div>
-      <textarea id="orph-contact-paste" rows="3" placeholder="Paste from the BI download">${escapeHtml(orphanContactPaste)}</textarea>
-      <button data-orph-contacts-load class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load pasted contacts</button>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px;">
+        ${[['leaders', 'Enrollers', f.rows.filter(r => r.leader).map(r => r.leader.id)], ['orphans', 'Orphans', f.rows.filter(r => r.leader).map(r => r.id)]].map(([k, label, ids]) => {
+          const have = [...new Set(ids)].filter(id => (f.contacts || {})[id] && (f.contacts[id].name || f.contacts[id].email)).length;
+          return `<div>
+            <div style="font-weight:600; font-size:13px; margin-bottom:4px;">${label} <span class="subtle" style="font-weight:400;">· ${have} of ${new Set(ids).size} loaded</span></div>
+            <textarea data-orph-contact-paste="${k}" rows="3" placeholder="Paste the ${label.toLowerCase()} from BI">${escapeHtml(orphanContactPaste[k])}</textarea>
+            <button data-orph-contacts-load="${k}" class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load ${label.toLowerCase()}</button>
+          </div>`;
+        }).join('')}
+      </div>
 
       ${haveContacts ? `
         ${(() => { const noName = [...new Set(rows.filter(r => !r.enrollerName).map(r => r.leaderId))]; return noName.length ? `<div class="orph-geo" style="display:block;"><b>${noName.length} enroller name${noName.length === 1 ? '' : 's'} missing</b> (${escapeHtml(noName.join(', '))}). Check that those IDs are in the BI paste and that its header row has a name column.</div>` : ''; })()}
@@ -7369,28 +7378,33 @@ function attachOrphanHandlers(){
 
   const skipInput = q('#orph-email-skip');
   if (skipInput) skipInput.onchange = () => { o.lastFinished.skip = skipInput.value; saveState(); render(); };
-  const biBtn = q('[data-orph-copy-bi]');
-  if (biBtn) biBtn.onclick = () => {
+  all('[data-orph-copy-bi]', el => el.onclick = () => {
+    const k = el.getAttribute('data-orph-copy-bi');
     const rows = orphanEmailRows(orphanEmailIncludeSent);
-    const ids = [...new Set(rows.flatMap(r => [r.orphanId, r.leaderId]))];
-    orphanCopy(ids.join('\n'), ids.length + ' IDs copied for BI');
-  };
-  const contactPaste = q('#orph-contact-paste');
-  if (contactPaste) contactPaste.oninput = () => { orphanContactPaste = contactPaste.value; };
-  const contactsBtn = q('[data-orph-contacts-load]');
-  if (contactsBtn) contactsBtn.onclick = () => {
+    const ids = [...new Set(rows.flatMap(r => k === 'leaders' ? [r.leaderId] : k === 'orphans' ? [r.orphanId] : [r.orphanId, r.leaderId]))];
+    orphanCopy(ids.join('\n'), ids.length + (k === 'leaders' ? ' enroller' : k === 'orphans' ? ' orphan' : '') + ' IDs copied for BI');
+  });
+  all('[data-orph-contact-paste]', el => el.oninput = () => { orphanContactPaste[el.getAttribute('data-orph-contact-paste')] = el.value; });
+  all('[data-orph-contacts-load]', el => el.onclick = () => {
+    const k = el.getAttribute('data-orph-contacts-load');
+    const text = orphanContactPaste[k];
+    if (!String(text || '').trim()) { showToast('Paste the rows first'); return; }
+    if (orphanLoadContacts(text)) { orphanContactPaste[k] = ''; render(); }
+  });
+  // Returns true when contacts were loaded.
+  function orphanLoadContacts(text){
     // Title rows above the header (as BI downloads have) are skipped.
-    const lines = String(orphanContactPaste || '').replace(/\r/g, '').split('\n');
+    const lines = String(text || '').replace(/\r/g, '').split('\n');
     const isHead = l => { const c = l.split('\t').map(x => x.trim()); return c.some(x => CONTACT_FIELDS[0].re.test(x)) && c.some(x => /e-?mail/i.test(x)); };
     const at = lines.findIndex(isHead);
-    const parsed = parseSheetPaste(at > 0 ? lines.slice(at).join('\n') : orphanContactPaste, CONTACT_FIELDS);
+    const parsed = parseSheetPaste(at > 0 ? lines.slice(at).join('\n') : text, CONTACT_FIELDS);
     const { missing, columns } = parsed;
     // Sheets with several people per row (the placement log: orphan ID, name,
     // email, then enroller ID, name, email) are read pair by pair as well.
     const paired = orphanPairedContacts(lines);
     // Without a header row the columns can only be guessed, so the pairs win.
     const rows = missing.length || (!columns && paired.length) ? [] : parsed.rows;
-    if (missing.length && !paired.length) { orphanError = 'Could not find these columns in the BI header row: ' + missing.join(', ') + '.'; render(); return; }
+    if (missing.length && !paired.length) { orphanError = 'Could not find these columns in the BI header row: ' + missing.join(', ') + '.'; render(); return false; }
     const contacts = o.lastFinished.contacts = o.lastFinished.contacts || {};
     let n = 0;
     paired.forEach(p => {
@@ -7405,11 +7419,12 @@ function attachOrphanHandlers(){
       n++;
     });
     n = Math.max(n, new Set(paired.map(p => p.id)).size);
-    if (!n) { orphanError = 'No contacts found in that paste. Include the header row.'; render(); return; }
-    orphanError = ''; orphanContactPaste = '';
+    if (!n) { orphanError = 'No contacts found in that paste. Include the header row.'; render(); return false; }
+    orphanError = '';
     o.lastFinished.contactColumns = columns || '';
     saveState(); render(); showToast(n + ' contacts loaded');
-  };
+    return true;
+  }
   const exportBtn = q('[data-orph-export]');
   if (exportBtn) exportBtn.onclick = async () => {
     const rows = orphanEmailRows(orphanEmailIncludeSent);
@@ -7429,10 +7444,7 @@ function attachOrphanHandlers(){
     if (!file) return;
     try {
       const sheets = await orphanReadWorkbook(file);
-      orphanContactPaste = Object.values(sheets).sort((x, y) => y.split('\n').length - x.split('\n').length)[0] || '';
-      render();
-      const btn = document.querySelector('[data-orph-contacts-load]');
-      if (btn) btn.click();
+      orphanLoadContacts(Object.values(sheets).sort((x, y) => y.split('\n').length - x.split('\n').length)[0] || '');
     } catch (e) { orphanError = e.message || 'Could not read that file.'; render(); }
   };
 
