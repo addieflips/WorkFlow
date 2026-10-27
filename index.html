@@ -5854,6 +5854,7 @@ let orphanError = '';
 let orphanLocOpen = false;       // Leader locations panel
 let orphanLocCountry = '';       // country shown in detail
 let orphanLocAll = false;        // show every leader, not just problems
+let orphanImportMsg = null;      // result of the last pasted ID / lat / lon import
 // What's typed in the small lat/lon and postal boxes. The page re-renders
 // often (every second during a Check), which would otherwise wipe a box
 // as soon as the cursor moves to the next one.
@@ -6721,6 +6722,57 @@ function orphanLeaderLocStatus(l){
 
 function orphanFmtLL(ll){ return ll ? ll.map(v => Math.round(v * 10000) / 10000).join(', ') : '—'; }
 
+// Pasted "ID lat lon" rows become saved fixes. Impossible numbers, and
+// coordinates far outside the leader's country with no other leader nearby,
+// are skipped. A repeated ID keeps its last row.
+function orphanImportLocations(text){
+  const o = orphanData();
+  const byId = new Map(o.leaders.map(l => [String(l[0]), l]));
+  const picked = new Map(), bad = [], far = [], conflicts = new Set();
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const raw = line.trim();
+    if (!raw) return;
+    const parts = raw.split(/[\s,;]+/).filter(Boolean);
+    const id = parts[0];
+    const ll = parts.length === 3 && /^\d+$/.test(id) ? orphanReadLatLon(parts[1], parts[2]) : null;
+    if (!ll || (!ll[0] && !ll[1])) { if (/^\d+$/.test(id || '')) bad.push(raw); return; }
+    const l = byId.get(id);
+    if (l) {
+      const mid = orphanCountryMedians().get(l[2]);
+      const nearOther = () => o.leaders.some(x => x[2] === l[2] && String(x[0]) !== id && (() => {
+        const p = orphanLeaderCoords(x);
+        return p && haversineMiles(ll, p) <= 300;
+      })());
+      if (mid && haversineMiles(ll, mid) > 2500 && !nearOther()) { far.push(raw + '  (' + l[2] + ')'); return; }
+    }
+    const prev = picked.get(id);
+    if (prev && haversineMiles(prev, ll) > 50) conflicts.add(id);
+    picked.set(id, ll);
+  });
+  picked.forEach((ll, id) => { o.leaderFix[id] = ll; });
+  const unknown = [...picked.keys()].filter(id => !byId.has(id)).length;
+  if (picked.size) saveState();
+  orphanImportMsg = { saved: picked.size, unknown, bad, far, conflicts: [...conflicts] };
+}
+
+function orphanImportPanel(){
+  const m = orphanImportMsg;
+  const list = (title, rows) => rows.length ? `<div style="margin-top:6px;"><b>${title} (${rows.length}):</b><div class="subtle" style="font-family:monospace; font-size:12px; max-height:120px; overflow-y:auto; white-space:pre-wrap;">${escapeHtml(rows.join('\n'))}</div></div>` : '';
+  return `
+    <details style="margin-top:12px;" ${m ? 'open' : ''}>
+      <summary style="cursor:pointer; font-weight:600; font-size:13.5px;">Import locations (paste ID, lat, lon)</summary>
+      <div class="hint" style="margin:6px 0;">One leader per line: <code>ID lat lon</code> (spaces, tabs or commas). Each is saved like a fix you typed, and kept for later pulls. If an ID is listed twice, the last line wins.</div>
+      <textarea data-orph-import-text rows="6" placeholder="12592496 -41.4718 -72.9396" style="width:100%; font-family:monospace; font-size:12.5px;"></textarea>
+      <div style="display:flex; gap:8px; margin-top:6px;"><button data-orph-import-save class="btn btn-primary" style="padding:6px 14px; font-size:13px;">Save locations</button>${m ? `<button data-orph-import-clear class="btn btn-ghost" style="padding:6px 12px; font-size:13px;">Clear result</button>` : ''}</div>
+      ${m ? `<div style="margin-top:8px; font-size:13px;">
+        <div><b>${m.saved}</b> leader location${m.saved === 1 ? '' : 's'} saved${m.unknown ? ` (${m.unknown} not on the current leader list; kept in case they show up later)` : ''}.</div>
+        ${list('Skipped: not a valid ID, lat and lon', m.bad)}
+        ${list('Skipped: far outside the leader’s country', m.far)}
+        ${list('Listed twice with different spots (last one used; check these)', m.conflicts)}
+      </div>` : ''}
+    </details>`;
+}
+
 function orphanLocationsPanel(){
   const o = orphanData();
   const byCountry = new Map();
@@ -6738,6 +6790,7 @@ function orphanLocationsPanel(){
       <label class="section">Leader locations</label>
       <div class="hint" style="margin:0 0 10px;">Only leaders with a 1 in the leader list's Count column are shown and placed. The leader list's lat/lon is often wrong. <b>Check</b> looks up every leader's city and postal code in a country (about a second each, remembered after that) and corrects any list lat/lon more than 50 miles off automatically (saved, nothing to click). Only leaders it couldn't place are listed here. ${ORPHAN_ZIP_COUNTRIES.join(', ')} match by zip code instead, so they only need a postal code.</div>
       ${orphanGeo ? `<div class="orph-geo">${escapeHtml(orphanGeo.label)}… ${orphanGeo.done} of ${orphanGeo.total} <button data-orph-geo-stop class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Stop</button></div>` : ''}
+      ${o.leaders.length ? orphanImportPanel() : ''}
       ${!o.leaders.length ? `<div class="subtle">Paste the leader list under Monthly setup first.</div>` : `
       <div class="orph-table-wrap" style="max-height:320px; overflow-y:auto; margin-top:10px;">
         <table class="orph-table">
@@ -7264,6 +7317,15 @@ function attachOrphanHandlers(){
   const locAll = q('[data-orph-loc-all]');
   if (locAll) locAll.onchange = () => { orphanLocAll = locAll.checked; render(); };
   all('[data-orph-geo-stop]', el => el.onclick = () => { if (orphanGeo) orphanGeo.stop = true; });
+  const impSave = q('[data-orph-import-save]');
+  if (impSave) impSave.onclick = () => {
+    const text = q('[data-orph-import-text]').value;
+    if (!text.trim()) { showToast('Paste ID, lat, lon rows first'); return; }
+    orphanImportLocations(text); render();
+    showToast(orphanImportMsg.saved + ' location' + (orphanImportMsg.saved === 1 ? '' : 's') + ' saved');
+  };
+  const impClear = q('[data-orph-import-clear]');
+  if (impClear) impClear.onclick = () => { orphanImportMsg = null; render(); };
   const leaderById = id => o.leaders.find(l => String(l[0]) === id);
   all('[data-orph-fix-use]', el => el.onclick = () => {
     const l = leaderById(el.getAttribute('data-orph-fix-use'));
