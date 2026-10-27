@@ -6349,8 +6349,6 @@ const CONTACT_FIELDS = [
 
 // Retail customers are already in the 12 Retail tree and get no email, nor
 // does anyone listed as already placed.
-let orphanEmailIncludeSent = false;   // also export orphans already exported today
-
 function orphanEmailRows(includeSent){
   const f = orphanData().lastFinished;
   if (!f) return [];
@@ -6426,8 +6424,7 @@ let orphanContactPaste = { leaders: '', orphans: '' };  // the two mass-email pa
 
 function orphanEmailPanel(){
   const f = orphanData().lastFinished;
-  const rows = orphanEmailRows(orphanEmailIncludeSent);
-  const sentCount = orphanEmailRows(true).length - orphanEmailRows(false).length;
+  const rows = orphanEmailRows(false);
   if (!orphanEmailRows(true).length && !f.skip) return '';
   const haveContacts = Object.keys(f.contacts || {}).length > 0;
   const byInbox = new Map();
@@ -6476,8 +6473,7 @@ function orphanEmailPanel(){
             ${[...byInbox.entries()].sort((a, b) => orphanInboxSort(a[0], b[0])).map(([inbox, list]) => `<span class="orph-pill" style="font-size:12.5px;">${escapeHtml(inbox)} · ${list.length}</span>`).join('')}
           </div>
           <button data-orph-export class="btn btn-primary" style="padding:8px 14px;">${icon('folder',14)} Export email file (${rows.length} orphan${rows.length===1?'':'s'})</button>`
-        : `<div class="subtle" style="font-size:13px;">Everything placed today has been exported. Finish another pull to export its orphans.</div>`}
-        ${sentCount ? `<label class="subtle" style="font-size:13px; display:flex; align-items:center; gap:6px; margin-top:8px; cursor:pointer;"><input type="checkbox" data-orph-email-sent ${orphanEmailIncludeSent ? 'checked' : ''} style="width:auto;" /> Include the ${sentCount} already exported today</label>` : ''}
+        : `<div class="subtle" style="font-size:13px;">Everything placed today has been exported. Finish another pull to export its orphans, or use Email file from pasted rows below to export any orphans again.</div>`}
         <div class="hint">Check the default inbox three times before every send. Never send from Exceptions.</div>
       ` : ''}
     </div>`;
@@ -7443,7 +7439,7 @@ function attachOrphanHandlers(){
   if (skipInput) skipInput.onchange = () => { o.lastFinished.skip = skipInput.value; saveState(); render(); };
   all('[data-orph-copy-bi]', el => el.onclick = () => {
     const k = el.getAttribute('data-orph-copy-bi');
-    const rows = orphanEmailRows(orphanEmailIncludeSent);
+    const rows = orphanEmailRows(false);
     const ids = [...new Set(rows.flatMap(r => k === 'leaders' ? [r.leaderId] : k === 'orphans' ? [r.orphanId] : [r.orphanId, r.leaderId]))];
     orphanCopy(ids.join('\n'), ids.length + (k === 'leaders' ? ' enroller' : k === 'orphans' ? ' orphan' : '') + ' IDs copied for BI');
   });
@@ -7496,13 +7492,12 @@ function attachOrphanHandlers(){
   }
   const exportBtn = q('[data-orph-export]');
   if (exportBtn) exportBtn.onclick = async () => {
-    const rows = orphanEmailRows(orphanEmailIncludeSent);
+    const rows = orphanEmailRows(false);
     try { await orphanExportEmails(rows); }
     catch (e) { orphanError = e.message || 'Could not build the email file.'; render(); return; }
     // So the next pull's export holds only its own orphans.
     const ids = new Set(rows.map(r => r.orphanId));
     o.lastFinished.rows.forEach(r => { if (ids.has(r.id) && !r.exported) r.exported = todayKey(); });
-    orphanEmailIncludeSent = false;
     saveState(); render(); showToast(rows.length + ' orphans exported');
   };
   const ePanel = q('[data-orph-epaste-panel]');
@@ -7521,8 +7516,6 @@ function attachOrphanHandlers(){
   };
   const eClear = q('[data-orph-epaste-clear]');
   if (eClear) eClear.onclick = () => { orphanEmailPaste = ''; render(); };
-  const sentBox = q('[data-orph-email-sent]');
-  if (sentBox) sentBox.onchange = () => { orphanEmailIncludeSent = sentBox.checked; render(); };
   const contactFile = q('[data-orph-contact-file]');
   if (contactFile) contactFile.onchange = async () => {
     const file = contactFile.files[0];
