@@ -6540,7 +6540,7 @@ function viewOrphans(){
       </div>
     </div>
 
-    ${orphanError ? `<div class="card orph-alert">${escapeHtml(orphanError)}</div>` : ''}
+    ${orphanError ? `<div class="card orph-alert" style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;"><span>${escapeHtml(orphanError)}</span><button data-orph-error-close class="icon-btn" style="width:26px; height:26px; flex-shrink:0;" title="Close">${icon('close',13)}</button></div>` : ''}
     ${orphanLocOpen ? orphanLocationsPanel() : ''}
     ${orphanSetupOpen || ORPHAN_TABS.some(t => !o.leaders.some(l => l[7] === t)) ? orphanSetupPanel() : ''}
 
@@ -6971,7 +6971,7 @@ function orphanTableauCard(){
         ${!t.europe ? `<div class="orph-alert" style="margin:0 0 8px; padding:10px 12px; border-radius:10px;"><b>No Europe orphans in this download.</b> In Tableau, Sub Market EU has probably unchecked itself again: select all, Apply, Play, and download again.</div>` : ''}
         ${(t.from !== range.from || t.to !== range.to) ? `<div class="orph-geo" style="margin:0 0 8px;">The dates under This pull have changed since this file was read. Upload it again to use ${fmt(range.from)}–${fmt(range.to)}.</div>` : ''}
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-          <button data-orph-tableau-copy class="btn btn-primary" style="padding:8px 14px;" ${t.ids.length ? '' : 'disabled'}>${icon('copy',14)} Copy ${t.ids.length} IDs for BI</button>
+          <button data-orph-tableau-copy class="btn btn-primary" style="padding:8px 14px;" ${t.ids.length ? '' : 'disabled'}>${icon('copy',14)} Copy ${t.ids.length} ID${t.ids.length === 1 ? '' : 's'} for BI</button>
           <label class="btn btn-ghost" style="padding:8px 14px; cursor:pointer;">${icon('folder',15)} Upload a different file<input type="file" data-orph-tableau-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
         </div>
         <div class="hint">Use your own filtered list for BI as usual, or copy these. Either way, upload the BI file below and it's checked against this list.</div>
@@ -7034,6 +7034,8 @@ function attachOrphanHandlers(){
   const q = sel => document.querySelector(sel);
   const all = (sel, fn) => document.querySelectorAll(sel).forEach(fn);
 
+  const errClose = q('[data-orph-error-close]');
+  if (errClose) errClose.onclick = () => { orphanError = ''; render(); };
   const setupBtn = q('[data-orph-setup]');
   if (!setupBtn) return;
   setupBtn.onclick = () => { orphanSetupOpen = !orphanSetupOpen; render(); };
@@ -7044,6 +7046,8 @@ function attachOrphanHandlers(){
     const from = rangeFrom.value, to = rangeTo.value;
     if (from && to && from > to) { showToast('The start date is after the end date'); return; }
     o.batch.range = (from === def.from && to === def.to) ? null : { from, to };
+    // A "set the From date first" message is answered by setting it.
+    if (/From date/.test(orphanError)) orphanError = '';
     saveState(); render();
   };
   if (rangeFrom) rangeFrom.onchange = setRange;
