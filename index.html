@@ -6382,10 +6382,11 @@ function orphanInboxSort(a, b){
 // "Email" is the enroller's address, so Word picks it up for the enroller template.
 // Every "ID … name … email" run in each row: an ID of 4+ digits, then the
 // first name-like cell and the first email before the next ID.
+function orphanContactId(v){ return String(v == null ? '' : v).trim().replace(/[,\s]/g, '').replace(/\.0+$/, ''); }
 function orphanPairedContacts(lines){
   const out = [];
   lines.forEach(line => {
-    const cells = line.split('\t').map(c => c.trim());
+    const cells = line.split('\t').map(c => /^[\d,.\s]+$/.test(c.trim()) ? orphanContactId(c) : c.trim());
     cells.forEach((c, i) => {
       if (!/^\d{4,10}$/.test(c)) return;
       let name = '', email = '';
@@ -6450,14 +6451,14 @@ function orphanEmailPanel(){
         <label class="btn btn-ghost" style="padding:7px 12px; cursor:pointer;">${icon('folder',14)} Upload BI Excel file<input type="file" data-orph-contact-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px;">
-        ${[['leaders', 'Enrollers', f.rows.filter(r => r.leader).map(r => r.leader.id)], ['orphans', 'Orphans', f.rows.filter(r => r.leader).map(r => r.id)]].map(([k, label, ids]) => {
-          const have = [...new Set(ids)].filter(id => (f.contacts || {})[id] && (f.contacts[id].name || f.contacts[id].email)).length;
+        ${(() => { const all = orphanEmailRows(true); return [['leaders', 'Enrollers', all.map(r => r.leaderId), r => r.enrollerEmail], ['orphans', 'Orphans', all.map(r => r.orphanId), r => r.orphanEmail]].map(([k, label, ids, ok]) => {
+          const have = new Set(all.filter(ok).map(r => k === 'leaders' ? r.leaderId : r.orphanId)).size;
           return `<div>
             <div style="font-weight:600; font-size:13px; margin-bottom:4px;">${label} <span class="subtle" style="font-weight:400;">· ${have} of ${new Set(ids).size} loaded</span></div>
             <textarea data-orph-contact-paste="${k}" rows="3" placeholder="Paste the ${label.toLowerCase()} from BI">${escapeHtml(orphanContactPaste[k])}</textarea>
             <button data-orph-contacts-load="${k}" class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load ${label.toLowerCase()}</button>
           </div>`;
-        }).join('')}
+        }).join(''); })()}
       </div>
 
       ${haveContacts ? `
@@ -7411,6 +7412,7 @@ function attachOrphanHandlers(){
       const prev = contacts[p.id] || {};
       contacts[p.id] = { name: prev.name || p.name, email: prev.email || p.email };
     });
+    rows.forEach(r => { r.id = orphanContactId(r.id); });
     rows.filter(r => r.id).forEach(r => {
       const name = r.first && r.last ? `${r.last}, ${r.first}` : (r.name || [r.last, r.first].filter(Boolean).join(', '));
       // A later paste fills gaps but never blanks what an earlier one found.
@@ -7422,7 +7424,12 @@ function attachOrphanHandlers(){
     if (!n) { orphanError = 'No contacts found in that paste. Include the header row.'; render(); return false; }
     orphanError = '';
     o.lastFinished.contactColumns = columns || '';
-    saveState(); render(); showToast(n + ' contacts loaded');
+    // How many of them belong to today's pull, so a wrong paste shows at once.
+    const wanted = new Set(orphanEmailRows(true).flatMap(r => [r.orphanId, r.leaderId]));
+    const loadedIds = new Set([...paired.map(p => p.id), ...rows.map(r => r.id)]);
+    const hits = [...loadedIds].filter(id => wanted.has(id)).length;
+    saveState(); render(); showToast(n + ' rows read · ' + hits + ' match today\'s orphans and enrollers');
+    if (!hits) { orphanError = 'None of the pasted IDs are in today\'s pull. Check the ID column (it read: ' + (columns || 'no header row') + '), e.g. ' + [...loadedIds].slice(0, 3).join(', ') + '.'; render(); }
     return true;
   }
   const exportBtn = q('[data-orph-export]');
