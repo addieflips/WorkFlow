@@ -6161,8 +6161,13 @@ function parseBiLeaderList(text){
   return rows.map(c => {
     let country = c[8];
     if (orphanCountry(country).match === 'CHECK COUNTRY' && c[3] && !/\d/.test(c[3])) country = c[3];
-    const postal = c[7] || (/^[A-Z0-9-]{3,8}$/i.test(c[3]) ? c[3] : '');
-    return { id: c[0], name: '', country, city: c[5], state: c[6], lat: c[11], lon: c[12], count: 0, postal, active: c[10] };
+    // Blank City/State/Postal: the town is often only in the address lines,
+    // e.g. "Jrd Cabral, Itaberaí" then "GO, 76630000".
+    const st = c[3].match(/^([A-Za-z]{2}),\s*([A-Za-z0-9-]{3,10})$/);
+    const town = (c[2].split(',').pop() || '').replace(/^\s*\d[\d-]*\s+/, '').trim();
+    const city = c[5] || (/\d/.test(town) ? '' : town);
+    const postal = c[7] || (st ? st[2] : (/^[A-Z0-9-]{3,8}$/i.test(c[3]) ? c[3] : ''));
+    return { id: c[0], name: '', country, city, state: c[6] || (st ? st[1] : ''), lat: c[11], lon: c[12], count: 0, postal, active: c[10] };
   });
 }
 
@@ -6755,12 +6760,25 @@ function orphanImportLocations(text){
   orphanImportMsg = { saved: picked.size, unknown, bad, far, conflicts: [...conflicts] };
 }
 
+// Leaders (not in zip-code countries) that still have no usable location.
+function orphanNeedLocation(){
+  return orphanData().leaders.filter(l => orphanLeaderActive(l) && !orphanZipCountry(l[2]) && ORPHAN_LOC_PROBLEMS.includes(orphanLeaderLocStatus(l).status));
+}
+function orphanNeedLocationTsv(){
+  const rows = orphanNeedLocation().map(l => [l[0], l[3] || '', l[9] || '', orphanLeaderPostal(l) || '', l[2]].join('\t'));
+  return ['ID\tCity\tState\tPostal\tCountry', ...rows].join('\n');
+}
+
 function orphanImportPanel(){
   const m = orphanImportMsg;
+  const need = orphanNeedLocation().length;
   const list = (title, rows) => rows.length ? `<div style="margin-top:6px;"><b>${title} (${rows.length}):</b><div class="subtle" style="font-family:monospace; font-size:12px; max-height:120px; overflow-y:auto; white-space:pre-wrap;">${escapeHtml(rows.join('\n'))}</div></div>` : '';
   return `
     <details style="margin-top:12px;" ${m ? 'open' : ''}>
       <summary style="cursor:pointer; font-weight:600; font-size:13.5px;">Import locations (paste ID, lat, lon)</summary>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0;">
+        ${need ? `<button data-orph-need-copy class="btn btn-ghost" style="padding:6px 12px; font-size:13px;">Copy ${need} leader${need === 1 ? ' that needs' : 's that need'} a location</button><span class="subtle" style="font-size:12.5px;">ID, city, state, postal and country of every red/yellow leader, all countries at once (zip-code countries left out)</span>` : '<span class="subtle" style="font-size:13px;">Every leader has a location.</span>'}
+      </div>
       <div class="hint" style="margin:6px 0;">One leader per line: <code>ID lat lon</code> (spaces, tabs or commas). Each is saved like a fix you typed, and kept for later pulls. If an ID is listed twice, the last line wins.</div>
       <textarea data-orph-import-text rows="6" placeholder="12592496 -41.4718 -72.9396" style="width:100%; font-family:monospace; font-size:12.5px;"></textarea>
       <div style="display:flex; gap:8px; margin-top:6px;"><button data-orph-import-save class="btn btn-primary" style="padding:6px 14px; font-size:13px;">Save locations</button>${m ? `<button data-orph-import-clear class="btn btn-ghost" style="padding:6px 12px; font-size:13px;">Clear result</button>` : ''}</div>
@@ -7324,6 +7342,8 @@ function attachOrphanHandlers(){
     orphanImportLocations(text); render();
     showToast(orphanImportMsg.saved + ' location' + (orphanImportMsg.saved === 1 ? '' : 's') + ' saved');
   };
+  const needCopy = q('[data-orph-need-copy]');
+  if (needCopy) needCopy.onclick = () => orphanCopy(orphanNeedLocationTsv(), orphanNeedLocation().length + ' leaders copied');
   const impClear = q('[data-orph-import-clear]');
   if (impClear) impClear.onclick = () => { orphanImportMsg = null; render(); };
   const leaderById = id => o.leaders.find(l => String(l[0]) === id);
