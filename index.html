@@ -6269,7 +6269,7 @@ const ORPHAN_STATUS = {
 function orphanRetailFirst(rows){ return [...rows.filter(r => r.status === 'retail'), ...rows.filter(r => r.status !== 'retail')]; }
 function orphanPlaced(rows){ return orphanRetailFirst(rows.filter(r => r.status === 'ready' || r.status === 'retail')); }
 function orphanLeaderIdOf(r){ return r.status === 'retail' ? '12' : (r.leader ? r.leader.id : ''); }
-function orphanLeaderNameOf(r){ return r.status === 'retail' ? 'Retail Customer' : (r.leader ? r.leader.name : ''); }
+function orphanLeaderNameOf(r){ return r.status === 'retail' ? 'Retail Tree' : (r.leader ? r.leader.name : ''); }
 
 function orphanTsv(rows, kind){
   rows = orphanRetailFirst(rows);
@@ -6641,7 +6641,7 @@ function orphanCopyButtons(attr){
 function orphanRow(r){
   const st = ORPHAN_STATUS[r.status] || { label: r.status, tone: '' };
   let leaderCell = '';
-  if (r.status === 'retail') leaderCell = '12 · Retail Customer';
+  if (r.status === 'retail') leaderCell = '12 · Retail Tree';
   else if (r.status === 'ready' || r.status === 'noleader') {
     leaderCell = r.options.length ? `
       <select data-orph-pick="${escapeAttr(r.id)}" class="orph-pick">
