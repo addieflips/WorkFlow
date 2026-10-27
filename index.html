@@ -5855,6 +5855,7 @@ let orphanLocOpen = false;       // Leader locations panel
 let orphanLocCountry = '';       // country shown in detail
 let orphanLocAll = false;        // show every leader, not just problems
 let orphanShowDone = false;      // show finished (green) rows in Leader matches
+let orphanImportOpen = false;
 let orphanImportMsg = null;      // result of the last pasted ID / lat / lon import
 // What's typed in the small lat/lon and postal boxes. The page re-renders
 // often (every second during a Check), which would otherwise wipe a box
@@ -5943,6 +5944,13 @@ function orphanPlaceKeys(row, match){
   const cityKeys = city ? [ ...(st ? [city + '|' + st + '|' + m] : []), city + '|' + m ] : [];
   const zipKeys = zip ? ['zip:' + zip + '|' + m] : [];
   return ORPHAN_ZIP_COUNTRIES.includes(match) ? [...zipKeys, ...cityKeys] : [...cityKeys, ...zipKeys];
+}
+
+// Saved to the place list so the same city never needs looking up again.
+function orphanSaveOrphanLL(row, ll){
+  const o = orphanData();
+  const key = orphanPlaceKeys(row, orphanCountry(row.country).match)[0];
+  if (key) o.places[key] = ll; else { row.lat = String(ll[0]); row.lon = String(ll[1]); }
 }
 
 function orphanCoords(row, match){
@@ -6650,6 +6658,18 @@ function viewOrphans(){
           <div style="font-size:13.5px;">${shown.length && !orphanShowDone ? `<b>${shown.length}</b> need${shown.length === 1 ? 's' : ''} attention` : !orphanShowDone ? `<b>All ${done.length} done</b> (matched or retail)` : `All ${rows.length} orphans`}${done.length && !orphanShowDone ? ` <span class="subtle">· ${done.length} done and hidden (still copied by the buttons)</span>` : ''}</div>
           ${done.length ? `<label class="subtle" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" data-orph-show-done ${orphanShowDone ? 'checked' : ''} style="width:auto;" /> Show done rows</label>` : ''}
         </div>
+        ${(() => {
+          const nc = rows.filter(r => r.status === 'needcoords').length;
+          return nc ? `<div class="role-block" style="margin-bottom:10px;">
+            <div style="font-weight:600; font-size:13.5px;">Fill in ${nc} location${nc === 1 ? '' : 's'} at once</div>
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0;">
+              <button data-orph-need-orphans class="btn btn-ghost" style="padding:6px 12px; font-size:13px;">${icon('copy',13)} Copy ${nc} orphan${nc === 1 ? '' : 's'} that need a location</button>
+              <span class="subtle" style="font-size:12.5px;">ID, city, state, postal, country — paste to Claude for lat/lon, or look them up yourself</span>
+            </div>
+            <textarea data-orph-oimport-text data-orph-draft="oimport" rows="4" placeholder="ID lat lon, one per line (e.g. 9503285 52.1056 21.2617)" style="width:100%; font-family:monospace; font-size:12.5px;">${escapeHtml(orphanDrafts.oimport || '')}</textarea>
+            <button data-orph-oimport-save class="btn btn-primary" style="padding:6px 14px; font-size:13px; margin-top:6px;">Save locations</button>
+          </div>` : '';
+        })()}
         ${shown.length ? `<div class="orph-table-wrap">
           <table class="orph-table">
             <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th><th></th></tr></thead>
@@ -6784,13 +6804,13 @@ function orphanImportPanel(){
   const need = orphanNeedLocation().length;
   const list = (title, rows) => rows.length ? `<div style="margin-top:6px;"><b>${title} (${rows.length}):</b><div class="subtle" style="font-family:monospace; font-size:12px; max-height:120px; overflow-y:auto; white-space:pre-wrap;">${escapeHtml(rows.join('\n'))}</div></div>` : '';
   return `
-    <details style="margin-top:12px;" ${m ? 'open' : ''}>
+    <details data-orph-import-panel style="margin-top:12px;" ${m || orphanImportOpen ? 'open' : ''}>
       <summary style="cursor:pointer; font-weight:600; font-size:13.5px;">Import locations (paste ID, lat, lon)</summary>
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0;">
         ${need ? `<button data-orph-need-copy class="btn btn-ghost" style="padding:6px 12px; font-size:13px;">Copy ${need} leader${need === 1 ? ' that needs' : 's that need'} a location</button><span class="subtle" style="font-size:12.5px;">ID, city, state, postal and country of every red/yellow leader, all countries at once (zip-code countries left out)</span>` : '<span class="subtle" style="font-size:13px;">Every leader has a location.</span>'}
       </div>
       <div class="hint" style="margin:6px 0;">One leader per line: <code>ID lat lon</code> (spaces, tabs or commas). Each is saved like a fix you typed, and kept for later pulls. If an ID is listed twice, the last line wins.</div>
-      <textarea data-orph-import-text rows="6" placeholder="12592496 -41.4718 -72.9396" style="width:100%; font-family:monospace; font-size:12.5px;"></textarea>
+      <textarea data-orph-import-text data-orph-draft="limport" rows="6" placeholder="12592496 -41.4718 -72.9396" style="width:100%; font-family:monospace; font-size:12.5px;">${escapeHtml(orphanDrafts.limport || '')}</textarea>
       <div style="display:flex; gap:8px; margin-top:6px;"><button data-orph-import-save class="btn btn-primary" style="padding:6px 14px; font-size:13px;">Save locations</button>${m ? `<button data-orph-import-clear class="btn btn-ghost" style="padding:6px 12px; font-size:13px;">Clear result</button>` : ''}</div>
       ${m ? `<div style="margin-top:8px; font-size:13px;">
         <div><b>${m.saved}</b> leader location${m.saved === 1 ? '' : 's'} saved${m.unknown ? ` (${m.unknown} not on the current leader list; kept in case they show up later)` : ''}.</div>
@@ -7242,15 +7262,37 @@ function attachOrphanHandlers(){
     const id = el.getAttribute('data-orph-ll');
     const ll = orphanReadLatLon(q(`[data-orph-lat="${CSS.escape(id)}"]`).value, q(`[data-orph-lon="${CSS.escape(id)}"]`).value);
     if (!ll) { showToast('Enter a valid lat and lon (South and West are negative)'); return; }
-    const [lat, lon] = ll;
     delete orphanDrafts['olat:' + id]; delete orphanDrafts['olon:' + id];
     const row = o.batch.orphans.find(r => r.id === id);
     if (!row) return;
-    // Saved to the place list so the same city never needs looking up again.
-    const key = orphanPlaceKeys(row, orphanCountry(row.country).match)[0];
-    if (key) o.places[key] = [lat, lon]; else { row.lat = String(lat); row.lon = String(lon); }
+    orphanSaveOrphanLL(row, ll);
     saveState(); render();
   });
+  const oNeedCopy = q('[data-orph-need-orphans]');
+  if (oNeedCopy) oNeedCopy.onclick = () => {
+    const need = computeOrphanResults().filter(r => r.status === 'needcoords');
+    const rows = need.map(r => [r.id, r.city || '', r.state || '', r.postal || '', orphanCountry(r.country).match].join('\t'));
+    orphanCopy(['ID\tCity\tState\tPostal\tCountry', ...rows].join('\n'), need.length + ' orphans copied');
+  };
+  const oImp = q('[data-orph-oimport-save]');
+  if (oImp) oImp.onclick = () => {
+    const text = q('[data-orph-oimport-text]').value;
+    if (!text.trim()) { showToast('Paste ID, lat, lon rows first'); return; }
+    let saved = 0; const skipped = [];
+    text.split(/\r?\n/).forEach(line => {
+      const raw = line.trim();
+      if (!raw || !/^\d/.test(raw)) return;
+      const parts = raw.split(/[\s,;]+/).filter(Boolean);
+      const row = o.batch.orphans.find(r => r.id === parts[0]);
+      const ll = parts.length === 3 ? orphanReadLatLon(parts[1], parts[2]) : null;
+      if (!row || !ll || (!ll[0] && !ll[1])) { skipped.push(raw); return; }
+      orphanSaveOrphanLL(row, ll); saved++;
+    });
+    if (saved) saveState();
+    delete orphanDrafts.oimport;
+    render();
+    showToast(saved + ' saved' + (skipped.length ? ' · skipped ' + skipped.length + ': ' + skipped.slice(0, 3).join(' / ') : ''));
+  };
 
   all('[data-orph-copy]', el => el.onclick = () => {
     const matched = computeOrphanResults().filter(r => r.status === 'ready');
@@ -7346,11 +7388,13 @@ function attachOrphanHandlers(){
   const locAll = q('[data-orph-loc-all]');
   if (locAll) locAll.onchange = () => { orphanLocAll = locAll.checked; render(); };
   all('[data-orph-geo-stop]', el => el.onclick = () => { if (orphanGeo) orphanGeo.stop = true; });
+  const impPanel = q('[data-orph-import-panel]');
+  if (impPanel) impPanel.ontoggle = () => { orphanImportOpen = impPanel.open; };
   const impSave = q('[data-orph-import-save]');
   if (impSave) impSave.onclick = () => {
     const text = q('[data-orph-import-text]').value;
     if (!text.trim()) { showToast('Paste ID, lat, lon rows first'); return; }
-    orphanImportLocations(text); render();
+    orphanImportLocations(text); delete orphanDrafts.limport; render();
     showToast(orphanImportMsg.saved + ' location' + (orphanImportMsg.saved === 1 ? '' : 's') + ' saved');
   };
   const showDone = q('[data-orph-show-done]');
