@@ -6018,6 +6018,12 @@ function orphanLeaderSuspect(l){
 }
 
 function orphanZipCountry(match){ return ORPHAN_ZIP_COUNTRIES.includes(match); }
+// The BI file keeps a zip-code country's postal code in address 3 (read as
+// City), e.g. Russia "141337", with the Postal column blank.
+function orphanPostalIn(text){
+  const t = String(text || '').trim();
+  return /^[A-Z0-9 -]{3,8}$/i.test(t) && /\d/.test(t) ? orphanZip(t) : '';
+}
 function orphanZip(z){ return String(z || '').trim().toUpperCase().replace(/\s+/g, ''); }
 function orphanLeaderPostal(l){
   const fix = orphanData().leaderFix[l[0]];
@@ -6248,7 +6254,7 @@ function computeOrphanResults(){
     if (orphanSelfPlacing(r.country)) { row.status = 'selfplace'; return row; }
     if (c.match === 'CHECK COUNTRY') { row.status = 'checkcountry'; return row; }
     if (orphanZipCountry(c.match)) {
-      const z = orphanZip(r.postal);
+      const z = orphanZip(r.postal) || orphanPostalIn(r.city);
       if (!z) { row.status = 'needzip'; return row; }
       row.byZip = true;
       row.ranked = (byCountry.get(c.match) || [])
@@ -7112,6 +7118,7 @@ function orphanLoadOrphans(text, source){
     const named = (r.cells || []).find(c => c && orphanCountryTable().byName.has(orphanNorm(c)) && orphanCountry(c).match !== 'CHECK COUNTRY');
     if (named) r.country = named;
   });
+  list.forEach(r => { if (!r.postal && orphanZipCountry(orphanCountry(r.country).match)) r.postal = orphanPostalIn(r.city); });
     orphanError = '';
     // Those markets place their own orphans and test accounts are deleted
     // (SOP Phase 2 step 5, Phase 3 step 2), so neither reaches the list.
