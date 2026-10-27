@@ -6341,8 +6341,8 @@ function orphanTsv(rows, kind){
 const CONTACT_FIELDS = [
   { key:'id',    label:'ID',    re:/(^|[\s_])id$|^id\b|^(distributor|member|leader|enroller|orphan|wa|account)[ _]?(number|no\.?|#)$/i, required:true, prio:5 },
   { key:'type',  label:'Type',  re:/type/i, prio:1 },
-  { key:'first', label:'First name', re:/first/i, prio:2 },
-  { key:'last',  label:'Last name',  re:/last|surname/i, prio:2 },
+  { key:'first', label:'First name', re:/first.?name|given.?name|^first$/i, prio:2 },
+  { key:'last',  label:'Last name',  re:/last.?name|surname|family.?name|^last$/i, prio:2 },
   { key:'name',  label:'Name',  re:/name/i, prio:6 },
   { key:'email', label:'Email', re:/e-?mail/i, required:true, prio:1 },
 ];
@@ -6423,7 +6423,7 @@ function orphanEmailPanel(){
         <span class="subtle" style="font-size:13px;"><b>a.</b> Copy the enroller (and orphan) IDs, run them through the BI Distributor List, and download it as Excel (not CSV).</span>
         <button data-orph-copy-bi class="btn btn-ghost" style="padding:6px 11px; font-size:13px;">${icon('copy',13)} IDs for BI</button>
       </div>
-      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Upload that BI file, or paste its rows with the header row (ID, name, email). Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}</div>
+      <div class="subtle" style="font-size:13px; margin-bottom:6px;"><b>b.</b> Upload that BI file, or paste its rows with the header row (ID, name, email). Order doesn't matter.${haveContacts ? ` <span style="color:#1E7B3A;">${Object.keys(f.contacts).length} contacts loaded.</span>` : ''}${haveContacts && f.contactColumns ? `<div class="subtle" style="font-size:12px; margin-top:2px;">Columns read: ${escapeHtml(f.contactColumns)}</div>` : ''}</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:6px;">
         <label class="btn btn-ghost" style="padding:7px 12px; cursor:pointer;">${icon('folder',14)} Upload BI Excel file<input type="file" data-orph-contact-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
         <span class="subtle" style="font-size:13px;">or paste:</span>
@@ -6432,6 +6432,7 @@ function orphanEmailPanel(){
       <button data-orph-contacts-load class="btn btn-ghost" style="padding:7px 12px; margin-top:6px;">Load pasted contacts</button>
 
       ${haveContacts ? `
+        ${(() => { const noName = [...new Set(rows.filter(r => !r.enrollerName).map(r => r.leaderId))]; return noName.length ? `<div class="orph-geo" style="display:block;"><b>${noName.length} enroller name${noName.length === 1 ? '' : 's'} missing</b> (${escapeHtml(noName.join(', '))}). Check that those IDs are in the BI paste and that its header row has a name column.</div>` : ''; })()}
         ${missing.length ? `<div class="orph-geo" style="display:block;"><b>${missing.length} missing email${missing.length===1?'':'s'}</b>. Check DataTrax; if there's still none, they go out as NA. ${escapeHtml(missing.join(', '))}</div>` : ''}
         <div class="subtle" style="font-size:13px; margin:14px 0 6px;"><b>c.</b> Export the email file: one Excel file with a tab per inbox (Enroller Name, Orphan ID, Orphan Name, Orphan Email, Email). Save it to the desktop and close it before Word uses it. Enroller template: To = <b>Email</b>. Orphan template: To = <b>Orphan Email</b>.</div>
         ${rows.length ? `
@@ -7358,17 +7359,24 @@ function attachOrphanHandlers(){
   if (contactPaste) contactPaste.oninput = () => { orphanContactPaste = contactPaste.value; };
   const contactsBtn = q('[data-orph-contacts-load]');
   if (contactsBtn) contactsBtn.onclick = () => {
-    const { rows, missing } = parseSheetPaste(orphanContactPaste, CONTACT_FIELDS);
+    // Title rows above the header (as BI downloads have) are skipped.
+    const lines = String(orphanContactPaste || '').replace(/\r/g, '').split('\n');
+    const isHead = l => { const c = l.split('\t').map(x => x.trim()); return c.some(x => CONTACT_FIELDS[0].re.test(x)) && c.some(x => /e-?mail/i.test(x)); };
+    const at = lines.findIndex(isHead);
+    const { rows, missing, columns } = parseSheetPaste(at > 0 ? lines.slice(at).join('\n') : orphanContactPaste, CONTACT_FIELDS);
     if (missing.length) { orphanError = 'Could not find these columns in the BI header row: ' + missing.join(', ') + '.'; render(); return; }
     const contacts = o.lastFinished.contacts = o.lastFinished.contacts || {};
     let n = 0;
     rows.filter(r => r.id).forEach(r => {
       const name = r.first && r.last ? `${r.last}, ${r.first}` : (r.name || [r.last, r.first].filter(Boolean).join(', '));
-      contacts[r.id] = { name, email: /@/.test(r.email) ? r.email : '' };
+      // A later paste fills gaps but never blanks what an earlier one found.
+      const prev = contacts[r.id] || {};
+      contacts[r.id] = { name: name || prev.name || '', email: /@/.test(r.email) ? r.email : (prev.email || '') };
       n++;
     });
     if (!n) { orphanError = 'No contacts found in that paste. Include the header row.'; render(); return; }
     orphanError = ''; orphanContactPaste = '';
+    o.lastFinished.contactColumns = columns || '';
     saveState(); render(); showToast(n + ' contacts loaded');
   };
   const exportBtn = q('[data-orph-export]');
