@@ -5854,6 +5854,7 @@ let orphanError = '';
 let orphanLocOpen = false;       // Leader locations panel
 let orphanLocCountry = '';       // country shown in detail
 let orphanLocAll = false;        // show every leader, not just problems
+let orphanShowDone = false;      // show finished (green) rows in Leader matches
 let orphanImportMsg = null;      // result of the last pasted ID / lat / lon import
 // What's typed in the small lat/lon and postal boxes. The page re-renders
 // often (every second during a Check), which would otherwise wipe a box
@@ -6640,13 +6641,22 @@ function viewOrphans(){
           <label class="section" style="margin:0;">${count('retail') ? '4' : '3'}. Leader matches</label>
           ${orphanCopyButtons('data-orph-copy')}
         </div>
-        <div class="hint" style="margin:0 0 10px;"><b>Copy IDs, countries + inboxes</b> copies Orphan ID, Leader ID, Country (full name) and Inbox side by side, ready to paste in one go. Change an inbox with its dropdown. The other buttons copy one column each. Matched orphans only, always in the same order. Change a leader with the dropdown; the others re-match around it. Use the trash button at the end of a row to delete it, such as a test account.</div>
-        <div class="orph-table-wrap">
+        <div class="hint" style="margin:0 0 10px;"><b>Copy IDs, countries + inboxes</b> copies Orphan ID, Leader ID, Country (full name) and Inbox side by side, ready to paste in one go. Change an inbox with its dropdown. The other buttons copy one column each. Matched orphans only, always in the same order. Done rows (matched or retail) are hidden; the copy buttons still include them. Tick Show done rows to change a leader with the dropdown; the others re-match around it. Use the trash button at the end of a row to delete it, such as a test account.</div>
+        ${(() => {
+          const done = rows.filter(r => r.status === 'ready' || r.status === 'retail');
+          const shown = orphanShowDone ? orphanRetailFirst(rows) : rows.filter(r => !done.includes(r));
+          return `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+          <div style="font-size:13.5px;">${shown.length && !orphanShowDone ? `<b>${shown.length}</b> need${shown.length === 1 ? 's' : ''} attention` : !orphanShowDone ? `<b>All ${done.length} done</b> (matched or retail)` : `All ${rows.length} orphans`}${done.length && !orphanShowDone ? ` <span class="subtle">· ${done.length} done and hidden (still copied by the buttons)</span>` : ''}</div>
+          ${done.length ? `<label class="subtle" style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" data-orph-show-done ${orphanShowDone ? 'checked' : ''} style="width:auto;" /> Show done rows</label>` : ''}
+        </div>
+        ${shown.length ? `<div class="orph-table-wrap">
           <table class="orph-table">
             <thead><tr><th>Orphan</th><th>Country</th><th>Leader</th><th>Miles</th><th>Inbox</th><th>Status</th><th></th></tr></thead>
-            <tbody>${orphanRetailFirst(rows).map(orphanRow).join('')}</tbody>
+            <tbody>${shown.map(orphanRow).join('')}</tbody>
           </table>
-        </div>
+        </div>` : ''}`;
+        })()}
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
           <div class="subtle" style="max-width:520px;">When the IDs are in Ready, finish the pull. This logs it (so the next pull flips to ${tab === '50-499' ? '500+' : '50-499'}) and marks ${placed.filter(r=>r.leader).length} leader${placed.filter(r=>r.leader).length===1?'':'s'} as used for ${monthLabel(monthKey()).split(' ')[0]}. Their IDs, with the month beside them, are copied for Count &amp; Location column F.</div>
           <button data-orph-finish class="btn btn-primary" style="padding:9px 16px;" ${tab ? '' : 'disabled'}>Finish pull</button>
@@ -7343,6 +7353,8 @@ function attachOrphanHandlers(){
     orphanImportLocations(text); render();
     showToast(orphanImportMsg.saved + ' location' + (orphanImportMsg.saved === 1 ? '' : 's') + ' saved');
   };
+  const showDone = q('[data-orph-show-done]');
+  if (showDone) showDone.onchange = () => { orphanShowDone = showDone.checked; render(); };
   const needCopy = q('[data-orph-need-copy]');
   if (needCopy) needCopy.onclick = () => orphanCopy(orphanNeedLocationTsv(), orphanNeedLocation().length + ' leaders copied');
   const impClear = q('[data-orph-import-clear]');
