@@ -6070,6 +6070,15 @@ function orphanLastPull(){
   return log.length ? log[log.length-1] : null;
 }
 
+// The order dates this pull covers. By default it runs from where the last
+// pull ended (its own day counts again) through today; it can be changed.
+function orphanPullRange(){
+  const o = orphanData(), last = orphanLastPull();
+  const def = { from: last ? (last.to || last.date) : '', to: todayKey() };
+  const r = o.batch.range || {};
+  return { from: r.from || def.from, to: r.to || def.to, custom: !!(r.from || r.to) };
+}
+
 // Flips on every finished pull, including a second pull on the same day.
 function orphanTabToday(){
   const o = orphanData();
@@ -6509,6 +6518,7 @@ function viewOrphans(){
   const o = orphanData();
   const tab = orphanTabToday();
   const last = orphanLastPull();
+  const range = orphanPullRange();
   const rows = computeOrphanResults();
   const placed = orphanPlaced(rows);
   const count = s => rows.filter(r => r.status === s).length;
@@ -6544,7 +6554,16 @@ function viewOrphans(){
             ${ORPHAN_TABS.map(t => `<option value="${t}" ${o.batch.tabOverride===t?'selected':''}>Override: ${t}</option>`).join('')}
           </select>
         </div>
-        ${orphanStat('Last pull', last ? `${fmtDate(last.date)} · ${last.tab}` : 'None yet', '', last ? `Tableau: filter Most Recent Order from ${fmtDate(last.date)} through today` : 'Pick today’s tab to start')}
+        ${orphanStat('Last pull', last ? `${fmtDate(last.date)} · ${last.tab}` : 'None yet', '', last ? (last.from ? `Orders ${fmtDate(last.from)} – ${fmtDate(last.to)}` : '') : 'Pick today’s tab to start')}
+        <div class="orph-stat">
+          <div class="orph-stat-lbl" style="margin:0 0 4px;">Pulling orders from</div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <input type="date" data-orph-range-from value="${escapeAttr(range.from)}" style="width:auto; padding:4px 8px; font-size:13px;" />
+            <span class="subtle" style="font-size:13px;">to</span>
+            <input type="date" data-orph-range-to value="${escapeAttr(range.to)}" style="width:auto; padding:4px 8px; font-size:13px;" />
+          </div>
+          <div class="hint" style="margin-top:4px;">Tableau: filter Most Recent Order ${range.from ? fmtDate(range.from) : '…'} through ${fmtDate(range.to)}.${range.custom ? ' <a href="#" data-orph-range-reset style="color:var(--primary-dark);">Reset</a>' : ''}</div>
+        </div>
         ${orphanStat('Leaders eligible now', eligible, '', 'Right tab, count 0, not used this month, has lat/lon')}
         ${orphanStat('Used in ' + monthLabel(o.used.month).split(' ')[0], o.used.ids.length, '')}
       </div>
@@ -6844,7 +6863,7 @@ function orphanSetupPanel(){
           <div style="display:flex; flex-direction:column; gap:4px;">
             ${o.pullLog.slice(-6).reverse().map((p, i) => `
               <div class="subtle" style="display:flex; align-items:center; gap:8px; font-size:13px;">
-                <span style="min-width:150px;">${escapeHtml(p.date)} · ${escapeHtml(p.tab)}</span><span>${p.placed != null ? p.placed + ' placed' : ''}</span>
+                <span style="min-width:150px;">${escapeHtml(p.date)} · ${escapeHtml(p.tab)}</span><span>${p.placed != null ? p.placed + ' placed' : ''}${p.from ? ` · orders ${escapeHtml(p.from)} to ${escapeHtml(p.to)}` : ''}</span>
                 ${i === 0 ? `<button data-orph-undo-pull class="icon-btn danger" style="width:26px; height:26px;" title="Remove this entry (does not un-use its leaders)">${icon('trash',13)}</button>` : ''}
               </div>`).join('')}
           </div>` : `<div class="subtle" style="font-size:13px;">No pulls yet. Pick the leader tab under "This pull" for your first one; it flips by itself after that.</div>`}
@@ -6916,6 +6935,18 @@ function attachOrphanHandlers(){
   if (!setupBtn) return;
   setupBtn.onclick = () => { orphanSetupOpen = !orphanSetupOpen; render(); };
 
+  const rangeFrom = q('[data-orph-range-from]'), rangeTo = q('[data-orph-range-to]');
+  const setRange = () => {
+    const def = (() => { const keep = o.batch.range; o.batch.range = null; const d = orphanPullRange(); o.batch.range = keep; return d; })();
+    const from = rangeFrom.value, to = rangeTo.value;
+    if (from && to && from > to) { showToast('The start date is after the end date'); return; }
+    o.batch.range = (from === def.from && to === def.to) ? null : { from, to };
+    saveState(); render();
+  };
+  if (rangeFrom) rangeFrom.onchange = setRange;
+  if (rangeTo) rangeTo.onchange = setRange;
+  const rangeReset = q('[data-orph-range-reset]');
+  if (rangeReset) rangeReset.onclick = (e) => { e.preventDefault(); o.batch.range = null; saveState(); render(); };
   const tabSel = q('[data-orph-tab-override]');
   if (tabSel) tabSel.onchange = () => { o.batch.tabOverride = tabSel.value; o.batch.overrides = {}; saveState(); render(); };
 
@@ -7129,7 +7160,8 @@ function attachOrphanHandlers(){
       `• The loaded orphans are cleared; the placed rows stay available to copy.`;
     if (!confirm(msg)) return;
     o.used.ids = [...new Set([...o.used.ids, ...leaderIds])];
-    o.pullLog.push({ date: todayKey(), tab: orphanTabToday(), placed: placed.length });
+    const range = orphanPullRange();
+    o.pullLog.push({ date: todayKey(), tab: orphanTabToday(), placed: placed.length, from: range.from, to: range.to });
     // A second pull on the same day joins the first, so the emails go out once.
     const sameDay = o.lastFinished && o.lastFinished.date === todayKey();
     o.lastFinished = {
