@@ -6401,13 +6401,19 @@ function orphanPairedContacts(lines){
   return out;
 }
 
+// "Last, First" from BI reads "First Last" in the emails.
+function orphanFirstLast(name){
+  const parts = String(name || '').split(',').map(x => x.trim());
+  return parts.length === 2 && parts[0] && parts[1] ? parts[1] + ' ' + parts[0] : String(name || '').trim();
+}
+
 async function orphanExportEmails(rows){
   const XLSX = await orphanLoadXlsx();
   const wb = XLSX.utils.book_new();
   const inboxes = [...new Set(rows.map(r => r.inbox))].sort(orphanInboxSort);
   inboxes.forEach(inbox => {
     const aoa = [['Enroller Name', 'Orphan ID', 'Orphan Name', 'Orphan Email', 'Email'],
-      ...rows.filter(r => r.inbox === inbox).map(r => [r.enrollerName, /^\d+$/.test(r.orphanId) ? Number(r.orphanId) : r.orphanId, r.orphanName, r.orphanEmail || 'NA', r.enrollerEmail || 'NA'])];
+      ...rows.filter(r => r.inbox === inbox).map(r => [orphanFirstLast(r.enrollerName), /^\d+$/.test(r.orphanId) ? Number(r.orphanId) : r.orphanId, orphanFirstLast(r.orphanName), r.orphanEmail || 'NA', r.enrollerEmail || 'NA'])];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 28 }, { wch: 32 }, { wch: 32 }];
     XLSX.utils.book_append_sheet(wb, ws, inbox.slice(0, 31));
