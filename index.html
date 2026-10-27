@@ -7017,7 +7017,8 @@ function orphanLoadOrphans(text, source){
       const bi = new Set(list.map(r => String(r.id)));
       const want = new Set(o.batch.tableau.ids.map(String));
       const missingIds = [...want].filter(id => !bi.has(id));
-      const extras = list.map(r => String(r.id)).filter(id => !want.has(id));
+      // Anything already removed automatically (other markets, test accounts) isn't a mistake to report.
+      const extras = o.batch.orphans.map(r => String(r.id)).filter(id => !want.has(id));
       const few = (ids, label) => ids.slice(0, 12).map(label).join(', ') + (ids.length > 12 ? ` and ${ids.length - 12} more` : '');
       const parts = [];
       if (missingIds.length) parts.push(`Missed ${missingIds.length} who should be pulled: ${few(missingIds, id => id)}.`);
