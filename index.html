@@ -6380,6 +6380,26 @@ function orphanInboxSort(a, b){
 
 // One workbook, one tab per inbox, columns as the mail merge expects them.
 // "Email" is the enroller's address, so Word picks it up for the enroller template.
+// Every "ID … name … email" run in each row: an ID of 4+ digits, then the
+// first name-like cell and the first email before the next ID.
+function orphanPairedContacts(lines){
+  const out = [];
+  lines.forEach(line => {
+    const cells = line.split('\t').map(c => c.trim());
+    cells.forEach((c, i) => {
+      if (!/^\d{4,10}$/.test(c)) return;
+      let name = '', email = '';
+      for (let j = i + 1; j < cells.length && j <= i + 4 && !/^\d{4,10}$/.test(cells[j]); j++) {
+        const v = cells[j];
+        if (!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) email = v;
+        else if (!name && !email && /[A-Za-zÀ-ÿ].*[A-Za-zÀ-ÿ]/.test(v) && v.length > 2 && !/@/.test(v)) name = v;
+      }
+      if (name || email) out.push({ id: c, name, email });
+    });
+  });
+  return out;
+}
+
 async function orphanExportEmails(rows){
   const XLSX = await orphanLoadXlsx();
   const wb = XLSX.utils.book_new();
@@ -7363,10 +7383,20 @@ function attachOrphanHandlers(){
     const lines = String(orphanContactPaste || '').replace(/\r/g, '').split('\n');
     const isHead = l => { const c = l.split('\t').map(x => x.trim()); return c.some(x => CONTACT_FIELDS[0].re.test(x)) && c.some(x => /e-?mail/i.test(x)); };
     const at = lines.findIndex(isHead);
-    const { rows, missing, columns } = parseSheetPaste(at > 0 ? lines.slice(at).join('\n') : orphanContactPaste, CONTACT_FIELDS);
-    if (missing.length) { orphanError = 'Could not find these columns in the BI header row: ' + missing.join(', ') + '.'; render(); return; }
+    const parsed = parseSheetPaste(at > 0 ? lines.slice(at).join('\n') : orphanContactPaste, CONTACT_FIELDS);
+    const { missing, columns } = parsed;
+    // Sheets with several people per row (the placement log: orphan ID, name,
+    // email, then enroller ID, name, email) are read pair by pair as well.
+    const paired = orphanPairedContacts(lines);
+    // Without a header row the columns can only be guessed, so the pairs win.
+    const rows = missing.length || (!columns && paired.length) ? [] : parsed.rows;
+    if (missing.length && !paired.length) { orphanError = 'Could not find these columns in the BI header row: ' + missing.join(', ') + '.'; render(); return; }
     const contacts = o.lastFinished.contacts = o.lastFinished.contacts || {};
     let n = 0;
+    paired.forEach(p => {
+      const prev = contacts[p.id] || {};
+      contacts[p.id] = { name: prev.name || p.name, email: prev.email || p.email };
+    });
     rows.filter(r => r.id).forEach(r => {
       const name = r.first && r.last ? `${r.last}, ${r.first}` : (r.name || [r.last, r.first].filter(Boolean).join(', '));
       // A later paste fills gaps but never blanks what an earlier one found.
@@ -7374,6 +7404,7 @@ function attachOrphanHandlers(){
       contacts[r.id] = { name: name || prev.name || '', email: /@/.test(r.email) ? r.email : (prev.email || '') };
       n++;
     });
+    n = Math.max(n, new Set(paired.map(p => p.id)).size);
     if (!n) { orphanError = 'No contacts found in that paste. Include the header row.'; render(); return; }
     orphanError = ''; orphanContactPaste = '';
     o.lastFinished.contactColumns = columns || '';
