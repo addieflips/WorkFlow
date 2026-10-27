@@ -6742,7 +6742,63 @@ function viewOrphans(){
         ${orphanEmailPanel()}
       </div>
     ` : ''}
+    ${orphanPastedEmailCard()}
   `;
+}
+
+// Mass emails for any pull, straight from pasted placement rows: orphan ID,
+// name, email, then enroller ID, name, email, and the inbox (or country).
+let orphanEmailPaste = '';
+let orphanEmailPasteOpen = false;
+function orphanParsePlacementRows(text){
+  const isId = c => /^\d{4,10}$/.test(c) || c === '12';
+  const seen = new Set(), rows = [];
+  let retail = 0;
+  String(text || '').replace(/\r/g, '').split('\n').forEach(line => {
+    const cells = line.split('\t').map(c => /^[\d,.\s]+$/.test(c.trim()) ? orphanContactId(c) : c.trim());
+    const at = cells.map((c, i) => isId(c) ? i : -1).filter(i => i >= 0);
+    if (at.length < 2 || cells[at[0]] === '12') return;
+    const person = (i, end) => {
+      let name = '', email = '';
+      for (let j = i + 1; j < end && j <= i + 4; j++) {
+        const v = cells[j];
+        if (!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) email = v;
+        else if (!name && !email && /[A-Za-zÀ-ÿ].*[A-Za-zÀ-ÿ]/.test(v) && v.length > 2 && !/@/.test(v)) name = v;
+      }
+      return { name, email };
+    };
+    const orphanId = cells[at[0]], leaderId = cells[at[1]];
+    if (leaderId === '12' || cells.some(c => /^retail tree$/i.test(c))) { retail++; return; }
+    if (seen.has(orphanId)) return;
+    seen.add(orphanId);
+    const op = person(at[0], at[1]), lp = person(at[1], at[2] != null ? at[2] : cells.length);
+    const inboxCell = cells.find(c => ORPHAN_INBOXES.some(x => x.toLowerCase() === c.toLowerCase()));
+    const countryCell = cells.find(c => c.length > 1 && orphanCountry(c).match !== 'CHECK COUNTRY' && orphanCountryTable().byName.has(orphanNorm(c)));
+    const inbox = inboxCell ? ORPHAN_INBOXES.find(x => x.toLowerCase() === inboxCell.toLowerCase()) : countryCell ? orphanCountry(countryCell).inbox : 'Placements';
+    rows.push({ inbox, enrollerName: lp.name, enrollerEmail: lp.email, orphanId, orphanName: op.name, orphanEmail: op.email, leaderId });
+  });
+  return { rows, retail };
+}
+function orphanPastedEmailCard(){
+  const { rows, retail } = orphanParsePlacementRows(orphanEmailPaste);
+  const byInbox = new Map();
+  rows.forEach(r => byInbox.set(r.inbox, (byInbox.get(r.inbox) || 0) + 1));
+  const noEmail = rows.filter(r => !r.enrollerEmail).map(r => r.leaderId + ' (enroller)').concat(rows.filter(r => !r.orphanEmail).map(r => r.orphanId + ' (orphan)'));
+  return `
+    <details class="card" data-orph-epaste-panel style="margin-bottom:16px;" ${orphanEmailPasteOpen ? 'open' : ''}>
+      <summary style="cursor:pointer;"><label class="section" style="display:inline; cursor:pointer;">Email file from pasted rows</label> <span class="subtle" style="font-size:13px;">· any pull, e.g. one done outside the site</span></summary>
+      <div class="hint" style="margin:8px 0;">Paste the placement rows, all columns at once: orphan ID, name, email, enroller ID, name, email, and the inbox (or country). A header row is fine. Retail Tree rows are left out. Then export the same Excel file, one tab per inbox.</div>
+      <textarea data-orph-epaste rows="6" placeholder="Paste the rows here" style="width:100%; font-size:12.5px;">${escapeHtml(orphanEmailPaste)}</textarea>
+      ${rows.length ? `
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin:8px 0;">
+          <span style="font-size:13px;"><b>${rows.length}</b> orphan${rows.length === 1 ? '' : 's'}${retail ? ` <span class="subtle">(${retail} retail left out)</span>` : ''}:</span>
+          ${[...byInbox.entries()].sort((a, b) => orphanInboxSort(a[0], b[0])).map(([inbox, n]) => `<span class="orph-pill" style="font-size:12.5px;">${escapeHtml(inbox)} · ${n}</span>`).join('')}
+        </div>
+        ${noEmail.length ? `<div class="orph-geo" style="display:block;"><b>${noEmail.length} missing email${noEmail.length === 1 ? '' : 's'}</b> (go out as NA): ${escapeHtml(noEmail.join(', '))}</div>` : ''}
+        <button data-orph-epaste-export class="btn btn-primary" style="padding:8px 14px;">${icon('folder',14)} Export email file (${rows.length})</button>
+        <button data-orph-epaste-clear class="btn btn-ghost" style="padding:8px 12px;">Clear</button>
+      ` : orphanEmailPaste.trim() ? `<div class="subtle" style="font-size:13px; margin-top:6px;">No placement rows found. Each row needs an orphan ID and an enroller ID.</div>` : ''}
+    </details>`;
 }
 
 function orphanCopyButtons(attr){
@@ -7443,6 +7499,22 @@ function attachOrphanHandlers(){
     orphanEmailIncludeSent = false;
     saveState(); render(); showToast(rows.length + ' orphans exported');
   };
+  const ePanel = q('[data-orph-epaste-panel]');
+  if (ePanel) ePanel.ontoggle = () => { orphanEmailPasteOpen = ePanel.open; };
+  const ePaste = q('[data-orph-epaste]');
+  if (ePaste) {
+    ePaste.oninput = () => { orphanEmailPaste = ePaste.value; };
+    ePaste.onchange = () => { orphanEmailPaste = ePaste.value; render(); };
+    ePaste.onpaste = () => setTimeout(() => { orphanEmailPaste = ePaste.value; render(); }, 0);
+  }
+  const eExport = q('[data-orph-epaste-export]');
+  if (eExport) eExport.onclick = async () => {
+    const { rows } = orphanParsePlacementRows(orphanEmailPaste);
+    try { await orphanExportEmails(rows); showToast(rows.length + ' orphans exported'); }
+    catch (e) { orphanError = e.message || 'Could not build the email file.'; render(); }
+  };
+  const eClear = q('[data-orph-epaste-clear]');
+  if (eClear) eClear.onclick = () => { orphanEmailPaste = ''; render(); };
   const sentBox = q('[data-orph-email-sent]');
   if (sentBox) sentBox.onchange = () => { orphanEmailIncludeSent = sentBox.checked; render(); };
   const contactFile = q('[data-orph-contact-file]');
