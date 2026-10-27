@@ -6457,7 +6457,7 @@ function orphanEmailPanel(){
         <label class="btn btn-ghost" style="padding:7px 12px; cursor:pointer;">${icon('folder',14)} Upload BI Excel file<input type="file" data-orph-contact-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px;">
-        ${(() => { const all = orphanEmailRows(true); return [['leaders', 'Enrollers', all.map(r => r.leaderId), r => r.enrollerEmail], ['orphans', 'Orphans', all.map(r => r.orphanId), r => r.orphanEmail]].map(([k, label, ids, ok]) => {
+        ${(() => { const all = rows.length ? rows : orphanEmailRows(true); return  [['leaders', 'Enrollers', all.map(r => r.leaderId), r => r.enrollerEmail], ['orphans', 'Orphans', all.map(r => r.orphanId), r => r.orphanEmail]].map(([k, label, ids, ok]) => {
           const have = new Set(all.filter(ok).map(r => k === 'leaders' ? r.leaderId : r.orphanId)).size;
           return `<div>
             <div style="font-weight:600; font-size:13px; margin-bottom:4px;">${label} <span class="subtle" style="font-weight:400;">· ${have} of ${new Set(ids).size} loaded</span></div>
