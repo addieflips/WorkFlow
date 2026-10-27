@@ -6933,7 +6933,8 @@ function orphanFilterTableau(text, range){
   const { rows, missing } = parseSheetPaste(text, TABLEAU_FIELDS);
   if (missing.length) return { error: 'This doesn’t look like the Tableau download. Missing columns: ' + missing.join(', ') + '.' };
   const all = rows.filter(r => /\d/.test(r.id));
-  const res = { total: all.length, inRange: 0, noDate: 0, removed: {}, ids: [], from: range.from, to: range.to };
+  // ids go to BI; retail customers skip leader assignment (SOP Phase 3, step 6).
+  const res = { total: all.length, inRange: 0, noDate: 0, removed: {}, ids: [], retail: [], from: range.from, to: range.to };
   const why = {};   // id -> reason it shouldn't be pulled (kept in memory only)
   const drop = (id, reason) => { res.removed[reason] = (res.removed[reason] || 0) + 1; why[id] = reason; };
   const md = d => String(Number(d.slice(5, 7))) + '/' + String(Number(d.slice(8, 10)));
@@ -6947,6 +6948,7 @@ function orphanFilterTableau(text, range){
     if (r.status && !/^active$/i.test(r.status.trim())) return drop(r.id, r.status.trim() || 'not Active');
     if (orphanSelfPlacing(r.market) || orphanSelfPlacing(r.country)) return drop(r.id, orphanCountry(orphanSelfPlacing(r.market) ? r.market : r.country).match);
     if (/\btest\b/i.test(r.name)) return drop(r.id, 'test account');
+    if (/retail/i.test(r.type)) { const c = orphanCountry(r.country || r.market); res.retail.push({ id: r.id, country: c.match, inbox: c.inbox }); return; }
     res.ids.push(r.id);
   });
   orphanTableauWhy = why;
@@ -6964,17 +6966,24 @@ function orphanTableauCard(){
       <div class="hint" style="margin:0 0 8px;">Upload the Tableau download (Current Orphan Details, Crosstab), filtered or not. The app works out exactly who should be pulled: orders from <b>${fmt(range.from)} to ${fmt(range.to)}</b> (the dates under This pull), Active only, without Australia, China, India, Japan, Korea, New Zealand or test accounts. When you upload your BI file below, it tells you if you missed anyone or included someone you shouldn't have.</div>
       ${t ? `
         <div class="subtle" style="font-size:13.5px; margin-bottom:8px;">
-          <b>${t.ids.length} orphan${t.ids.length === 1 ? '' : 's'} to pull</b> from ${escapeHtml(t.file || 'the download')}: ${t.inRange} ordered ${fmt(t.from)}–${fmt(t.to)} out of ${t.total} rows.
+          <b>${t.ids.length + (t.retail || []).length} orphan${t.ids.length + (t.retail || []).length === 1 ? '' : 's'} to pull</b> from ${escapeHtml(t.file || 'the download')}${(t.retail || []).length ? ` (${(t.retail || []).length} retail customer${t.retail.length === 1 ? '' : 's'} + ${t.ids.length} for BI)` : ''}: ${t.inRange} ordered ${fmt(t.from)}–${fmt(t.to)} out of ${t.total} rows.
           ${Object.keys(t.removed).length ? `Removed: ${escapeHtml(Object.entries(t.removed).map(([k, n]) => `${n} ${k}`).join(', '))}.` : ''}
           ${t.noDate ? `${t.noDate} row${t.noDate === 1 ? ' had' : 's had'} no Most Recent Order date and ${t.noDate === 1 ? 'was' : 'were'} skipped.` : ''}
         </div>
         ${!t.europe ? `<div class="orph-alert" style="margin:0 0 8px; padding:10px 12px; border-radius:10px;"><b>No Europe orphans in this download.</b> In Tableau, Sub Market EU has probably unchecked itself again: select all, Apply, Play, and download again.</div>` : ''}
         ${(t.from !== range.from || t.to !== range.to) ? `<div class="orph-geo" style="margin:0 0 8px;">The dates under This pull have changed since this file was read. Upload it again to use ${fmt(range.from)}–${fmt(range.to)}.</div>` : ''}
+        ${(t.retail || []).length ? `
+          <div style="padding:10px 12px; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;">
+            <div style="font-weight:600; font-size:13.5px; margin-bottom:4px;">1. Retail customers first · ${t.retail.length}</div>
+            <div class="hint" style="margin:0 0 8px;">They skip leader assignment and BI. Paste at the bottom of Ready: Orphan ID, 12, Country, Inbox.</div>
+            <button data-orph-tableau-retail class="btn btn-primary" style="padding:6px 12px; font-size:13px;">${icon('copy',13)} Copy ${t.retail.length} retail customer${t.retail.length === 1 ? '' : 's'}</button>
+          </div>
+          <div style="font-weight:600; font-size:13.5px; margin-bottom:6px;">2. Everyone else goes to BI · ${t.ids.length}</div>` : ''}
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
           <button data-orph-tableau-copy class="btn btn-primary" style="padding:8px 14px;" ${t.ids.length ? '' : 'disabled'}>${icon('copy',14)} Copy ${t.ids.length} ID${t.ids.length === 1 ? '' : 's'} for BI</button>
           <label class="btn btn-ghost" style="padding:8px 14px; cursor:pointer;">${icon('folder',15)} Upload a different file<input type="file" data-orph-tableau-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
         </div>
-        <div class="hint">Use your own filtered list for BI as usual, or copy these. Either way, upload the BI file below and it's checked against this list.</div>
+        <div class="hint">Use your own filtered list for BI as usual, or copy these. Either way, upload the BI file below and it's checked against this list${(t.retail || []).length ? ' (retail customers aren\u2019t expected in it)' : ''}.</div>
       ` : `
         <label class="btn btn-ghost" style="padding:8px 14px; cursor:pointer;" ${range.from ? '' : 'title="Set the From date under This pull first"'}>${icon('folder',15)} Upload Tableau download<input type="file" data-orph-tableau-file accept=".xlsx,.xls,.csv,.tsv" style="display:none;" /></label>
         ${range.from ? '' : '<div class="hint">Set the From date under This pull first (your first pull has no previous date to start from).</div>'}
@@ -7018,7 +7027,8 @@ function orphanLoadOrphans(text, source){
       const want = new Set(o.batch.tableau.ids.map(String));
       const missingIds = [...want].filter(id => !bi.has(id));
       // Anything already removed automatically (other markets, test accounts) isn't a mistake to report.
-      const extras = o.batch.orphans.map(r => String(r.id)).filter(id => !want.has(id));
+      const retailIds = new Set((o.batch.tableau.retail || []).map(x => String(x.id)));
+      const extras = o.batch.orphans.filter(r => !/retail/i.test(r.type) && !retailIds.has(String(r.id))).map(r => String(r.id)).filter(id => !want.has(id));
       const few = (ids, label) => ids.slice(0, 12).map(label).join(', ') + (ids.length > 12 ? ` and ${ids.length - 12} more` : '');
       const parts = [];
       if (missingIds.length) parts.push(`Missed ${missingIds.length} who should be pulled: ${few(missingIds, id => id)}.`);
@@ -7076,6 +7086,11 @@ function attachOrphanHandlers(){
       o.batch.tableau = { ...res, file: file.name };
       saveState(); render();
     } catch (e) { orphanError = e.message || 'Could not read that file.'; render(); }
+  };
+  const tableauRetail = q('[data-orph-tableau-retail]');
+  if (tableauRetail) tableauRetail.onclick = () => {
+    const r = o.batch.tableau.retail || [];
+    orphanCopy(r.map(x => [x.id, '12', x.country, x.inbox].join('\t')).join('\n'), r.length + ' retail customers copied');
   };
   const tableauCopy = q('[data-orph-tableau-copy]');
   if (tableauCopy) tableauCopy.onclick = () => orphanCopy(o.batch.tableau.ids.join('\n'), o.batch.tableau.ids.length + ' IDs copied for BI');
