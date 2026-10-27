@@ -6833,7 +6833,8 @@ function orphanLocationsDetail(country){
   const o = orphanData();
   const zipC = orphanZipCountry(country);
   const all = o.leaders.filter(l => l[2] === country && orphanLeaderActive(l)).map(l => ({ l, loc: orphanLeaderLocStatus(l) }));
-  const shown = orphanLocAll ? all : all.filter(x => ORPHAN_LOC_PROBLEMS.includes(x.loc.status) || o.leaderFix[x.l[0]]);
+  // Only the ones still needing a location; fixed leaders are under Show every leader.
+  const shown = orphanLocAll ? all : all.filter(x => ORPHAN_LOC_PROBLEMS.includes(x.loc.status));
   const cap = 300;
   return `
     <div class="role-block">
