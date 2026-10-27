@@ -6219,7 +6219,13 @@ function computeOrphanResults(){
   const o = orphanData();
   const byCountry = orphanEligibleLeaders();
   const taken = new Set();
-  const rows = o.batch.orphans.map(r => {
+  // Retail customers found in the Tableau step join the list even when the
+  // BI file leaves them out, so they're copied and logged with the rest.
+  const inBatch = new Set(o.batch.orphans.map(r => String(r.id)));
+  const tableauRetail = o.batch.tableau && !o.batch.tableau.retailDone
+    ? (o.batch.tableau.retail || []).filter(x => !inBatch.has(String(x.id))).map(x => ({ id: String(x.id), name: '', type: 'Retail Customer', country: x.country, city: '', state: '', postal: '' }))
+    : [];
+  const rows = [...o.batch.orphans, ...tableauRetail].map(r => {
     const c = orphanCountry(r.country);
     const row = { ...r, match: c.match, inbox: (o.batch.inboxes || {})[r.id] || c.inbox, coords: null, leader: null, miles: null, options: [], status: '' };
     if (/retail/i.test(r.type)) { row.status = 'retail'; return row; }
@@ -6570,7 +6576,7 @@ function viewOrphans(){
       </div>
     </div>
 
-    ${o.batch.orphans.length ? '' : orphanTableauCard()}
+    ${o.batch.orphans.length && !o.batch.tableau ? '' : orphanTableauCard()}
 
     <div class="card" style="margin-bottom:16px;">
       <label class="section">1. Paste orphans</label>
@@ -7177,6 +7183,7 @@ function attachOrphanHandlers(){
     const ids = new Set(computeOrphanResults().filter(r => r.status === 'retail').map(r => r.id));
     if (!confirm(`Remove ${ids.size} retail customer${ids.size===1?'':'s'}? Copy them into Ready first.`)) return;
     o.batch.orphans = o.batch.orphans.filter(r => !ids.has(r.id));
+    if (o.batch.tableau) o.batch.tableau.retailDone = true;
     saveState(); render();
   };
   all('[data-orph-inbox]', el => el.onchange = () => {
