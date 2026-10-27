@@ -6229,7 +6229,7 @@ function orphanEligibleLeaders(){
     const postal = orphanLeaderPostal(l);
     if (zipC ? !postal : !coords) return;
     if (!byCountry.has(l[2])) byCountry.set(l[2], []);
-    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', city: l[3] || '', postal, coords });
+    byCountry.get(l[2]).push({ idx, id: String(l[0]), name: l[1] || '', city: l[3] || '', postal, coords, country: l[2] });
   });
   return byCountry;
 }
@@ -6281,6 +6281,19 @@ function computeOrphanResults(){
     const choice = row.ranked.find(x => !taken.has(x.l.id));
     if (choice) pick(row, choice); else row.status = 'noleader';
   });
+  // No leader left in the orphan's own country: the nearest leader in any
+  // other country, once everyone at home has been matched.
+  const abroad = [...byCountry.values()].flat().filter(l => l.coords);
+  rows.forEach(row => {
+    if (row.status !== 'noleader' || !row.coords) return;
+    row.ranked = abroad.filter(l => l.country !== row.match)
+      .map(l => ({ l, miles: Math.round(haversineMiles(row.coords, l.coords) * 100) / 100, abroad: true }))
+      .sort((a, b) => a.miles - b.miles || a.l.idx - b.l.idx);
+    const want = o.batch.overrides[row.id];
+    const manual = want && row.ranked.find(x => x.l.id === String(want) && !taken.has(x.l.id));
+    const choice = manual || row.ranked.find(x => !taken.has(x.l.id));
+    if (choice) { pick(row, choice); row.abroad = true; row.manual = !!manual; }
+  });
   // Alternatives for the dropdown: the nearest leaders, noting who already has
   // one. Picking a taken leader reserves them here and re-matches the other orphan.
   const holder = new Map(rows.filter(r => r.leader).map(r => [r.leader.id, r.id]));
@@ -6299,7 +6312,7 @@ const ORPHAN_STATUS = {
   checkcountry: { label:'EO/GAC – use the real country', tone:'warn' },
   needcoords:   { label:'Needs location',             tone:'warn' },
   needzip:      { label:'Needs postal code',          tone:'warn' },
-  noleader:     { label:'No eligible leader in country – place by hand', tone:'bad' },
+  noleader:     { label:'No eligible leader – place by hand', tone:'bad' },
 };
 
 // Retail customers are split out first (SOP Phase 3, step 6), then everyone else.
@@ -6657,7 +6670,7 @@ function viewOrphans(){
         </div>
         <div class="hint" style="margin:0 0 10px;"><b>Copy IDs, countries + inboxes</b> copies Orphan ID, Leader ID, Country (full name) and Inbox side by side, ready to paste in one go. Change an inbox with its dropdown. The other buttons copy one column each. Matched orphans only, always in the same order. Done rows (matched or retail) are hidden; the copy buttons still include them. Tick Show done rows to change a leader with the dropdown; the others re-match around it. Use the trash button at the end of a row to delete it, such as a test account.</div>
         ${(() => {
-          const done = rows.filter(r => r.status === 'ready' || r.status === 'retail');
+          const done = rows.filter(r => (r.status === 'ready' && !r.abroad) || r.status === 'retail');  // other-country matches stay in view to check
           const shown = orphanShowDone ? orphanRetailFirst(rows) : rows.filter(r => !done.includes(r));
           return `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
@@ -6717,8 +6730,8 @@ function orphanRow(r){
     leaderCell = r.options.length ? `
       <select data-orph-pick="${escapeAttr(r.id)}" class="orph-pick">
         ${r.leader ? '' : '<option value="">Pick a leader (takes them from another orphan)</option>'}
-        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)} (${x.miles != null ? x.miles + ' mi' : 'zip ' + escapeHtml(x.l.postal)})${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
-      </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}` : '—';
+        ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)}${x.abroad ? ', ' + escapeHtml(x.l.country) : ''} (${x.miles != null ? x.miles + ' mi' : 'zip ' + escapeHtml(x.l.postal)})${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
+      </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}${r.abroad ? ` <span class="badge" title="No eligible leader left in ${escapeAttr(r.match)}, so the nearest leader in another country">other country</span>` : ''}` : '—';
   } else if (r.status === 'needzip') {
     leaderCell = `<span class="orph-ll"><input data-orph-zip="${escapeAttr(r.id)}" ${orphanDraft('ozip:' + r.id)} placeholder="Postal code" style="width:110px;" /><button data-orph-zip-save="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
   } else if (r.status === 'needcoords') {
