@@ -167,6 +167,7 @@
   .orph-ll{ display:inline-flex; gap:4px; align-items:center; }
   .orph-ll input{ width:80px; padding:4px 7px; font-size:12.5px; }
   .orph-pill{ font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px; white-space:nowrap; background:var(--border); color:var(--muted); }
+  .save-problem{ position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:60; background:#FDECEA; color:#B0352B; border:1px solid #F3C2BD; border-radius:10px; padding:10px 14px; font-size:13.5px; display:flex; align-items:center; gap:10px; max-width:calc(100vw - 32px); box-shadow:0 4px 14px rgba(0,0,0,.12); }
   .orph-pill-ok{ background:#E6F4EA; color:#1E7B3A; }
   .orph-pill-warn{ background:#FDF4E1; color:#8A5A0B; }
   .orph-pill-bad{ background:#FDECEA; color:#B0352B; }
@@ -527,6 +528,29 @@ function migratePeopleIntoMembers(){
 // save — otherwise an empty default state would overwrite real data on the server.
 let loadOk = false;
 let loadErrorMessage = '';
+// The server copy this page last agreed with: its revision, and each top-level
+// part as JSON, so a conflicting save can tell which parts changed here.
+let syncedRev = 0;
+let syncedParts = {};
+let saveProblem = '';
+function snapshotParts(obj){
+  const out = {};
+  Object.keys(obj || {}).forEach(k => { if (k !== '_rev') out[k] = JSON.stringify(obj[k]); });
+  return out;
+}
+// Parts changed on this page win; everything else takes the server's copy.
+function mergeServerState(server){
+  const merged = Object.assign({}, DEFAULT_STATE, server);
+  const keys = new Set([...Object.keys(state), ...Object.keys(server || {})]);
+  keys.forEach(k => {
+    if (k === '_rev') return;
+    const mine = JSON.stringify(state[k]);
+    if (mine !== syncedParts[k] && state[k] !== undefined) merged[k] = state[k];
+  });
+  state = merged;
+  syncedParts = snapshotParts(server);
+  syncedRev = (server && server._rev) || 0;
+}
 
 async function loadState(){
   try {
@@ -556,6 +580,8 @@ async function loadState(){
 
     const data = await resp.json();
     if (data) state = Object.assign({}, DEFAULT_STATE, data);
+    syncedRev = (data && data._rev) || 0;
+    syncedParts = snapshotParts(data || {});
     locked = false; lockError = ''; setupMessage = '';
     loadOk = true; loadErrorMessage = '';
   } catch (e) {
@@ -616,24 +642,64 @@ async function loadState(){
   migratePeopleIntoMembers();
   render();
 }
-async function saveState(){
+// One save at a time; changes made meanwhile go out in the next one.
+let saveRunning = null, saveAgain = false;
+function saveState(){
   if (!loadOk) {
     showToast('Not saved — your data has not loaded yet');
-    return;
+    return Promise.resolve();
   }
+  saveAgain = true;
+  if (!saveRunning) saveRunning = (async () => {
+    try { while (saveAgain) { saveAgain = false; await saveOnce(); } }
+    finally { saveRunning = null; }
+  })();
+  return saveRunning;
+}
+async function saveOnce(){
   try {
-    const resp = await fetch('/.netlify/functions/state', {
-      method: 'POST',
-      headers: authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(state),
-    });
-    if (resp.status === 401) { locked = true; lockError = 'Your session was locked. Enter the passcode to continue.'; render(); return; }
-    if (!resp.ok) throw new Error('Save failed (' + resp.status + ')');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const body = JSON.stringify(state);
+      const sent = snapshotParts(JSON.parse(body));
+      const resp = await fetch('/.netlify/functions/state', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json', 'x-base-rev': String(syncedRev) }),
+        body,
+      });
+      if (resp.status === 401) { locked = true; lockError = 'Your session was locked. Enter the passcode to continue.'; render(); return; }
+      if (resp.status === 409) {
+        // Saved from another tab or device since this page loaded: keep both.
+        const d = await resp.json().catch(() => ({}));
+        if (d && d.state) { mergeServerState(d.state); render(); continue; }
+      }
+      if (resp.status === 413) throw new Error('Your saved data is too large to save (' + Math.round(body.length / 1e6 * 10) / 10 + ' MB).');
+      if (!resp.ok) throw new Error('Save failed (' + resp.status + ')');
+      const d = await resp.json().catch(() => ({}));
+      syncedRev = d.rev || syncedRev;
+      syncedParts = sent;
+      if (saveProblem) { saveProblem = ''; render(); }
+      return;
+    }
+    throw new Error('Save kept clashing with another open tab.');
   } catch(e){
     console.error('save failed', e);
-    showToast('Save failed — check your connection');
+    saveProblem = (e && e.message && !/fetch/i.test(e.message) ? e.message : 'Save failed — check your connection.') + ' Your latest changes are not saved yet.';
+    render();
   }
 }
+
+// Coming back to this tab picks up changes saved from another tab or device.
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !loadOk || locked || saveRunning) return;
+  try {
+    const resp = await fetch('/.netlify/functions/state', { headers: authHeaders() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (!data || saveRunning || (data._rev || 0) === syncedRev) return;
+    mergeServerState(data);
+    render();
+  } catch(e){}
+});
 function showToast(msg){ toast = msg; render(); setTimeout(()=>{ toast=''; render(); }, 1800); }
 
 function nameToken(label){ return `{{${label} Name}}`; }
@@ -745,7 +811,10 @@ function render(){
       <main class="main"><div class="main-inner${view === 'home' ? ' wide' : ''}">${mainBody()}</div></main>
     </div>
     ${toast ? `<div class="toast">${toast}</div>` : ''}
+    ${saveProblem ? `<div class="save-problem">${escapeHtml(saveProblem)} <button data-save-retry class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Try again</button></div>` : ''}
   `;
+  const retry = document.querySelector('[data-save-retry]');
+  if (retry) retry.onclick = () => saveState();
 
   if (prevScroll) {
     const main = document.querySelector('.main');
