@@ -61,3 +61,18 @@ Line numbers are approximate (index.html, Oct 2026).
 4. **Counts are money-adjacent.** No change to `dailyCounts`, carry-forward or Dashboard maths.
 5. **Single global stylesheet.** `.card` is shared by every screen; Home changes are scoped to Home classes (`.dcard`, `.home-*`).
 6. **Saving.** No new state keys are needed for layout; per-session UI state (which chips or groups are open) stays in memory.
+
+## Result (steps 3–14)
+
+| Area | Where it is now |
+|---|---|
+| Navigation | Sidebar top: Today · Task board · Waiting on, then pinned pages and More (all other screens unchanged) |
+| Daily tasks, Reminders, Needs attention, Today's meetings, Team goal | Collapsible sections in the sidebar, on every screen |
+| Header | Title + date, search, Filter, + Add task (also N, and + on each queue), desktop pop-ups bell, Manage cards |
+| Summary | Total remaining · Overdue · Due soon (today + 3 days) · Completed today; each opens its filtered list |
+| Waiting on | Compact section on Today and the board; full view grouped by person with follow-up dates and "Followed up" |
+| Queues | All cards in a 5/4/3/2/1-column grid; labelled counts, thin bar, task details (due, waiting, priority, notes), completed work expandable |
+| Search / filters / sort | Results list replaces the grid while active; one Clear returns to the board |
+| Undo | Completing, reopening, deleting tasks; removing daily tasks and reminders |
+
+New optional task fields: `priority` ('low' / 'high'), `notes`, `followUps` (dates). Nothing else in the data model changed.
