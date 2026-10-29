@@ -403,6 +403,31 @@
   .build-stamp{ color:#B3B0AA; margin-top:auto; }
   .side-panels{ border-top:1px solid var(--border); margin-top:8px; }
   .nav-primary{ display:flex; flex-direction:column; gap:1px; }
+  .metric.on{ border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); }
+  .ws-add.on{ background:var(--primary-soft); border-color:#C9CEDA; }
+  .results{ padding:12px 16px; }
+  .results-bar{ display:flex; align-items:center; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; }
+  .results-controls{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .results-controls select{ width:auto; font-size:12.5px; padding:5px 8px; }
+  .filter-chip{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--muted); background:#fff; border:1px solid var(--border); border-radius:999px; padding:4px 11px; cursor:pointer; }
+  .filter-chip:hover{ color:var(--ink); border-color:#D9D4CE; }
+  .filter-chip.on{ background:var(--ink); border-color:var(--ink); color:#fff; }
+  .results-count{ font-size:12px; color:var(--muted); margin:10px 0 2px; }
+  .tl-row{ display:flex; align-items:center; gap:10px; padding:7px 4px; border-top:1px solid #F1EEEA; }
+  .tl-row > input[type=checkbox]{ width:15px; height:15px; flex-shrink:0; margin:0; }
+  .tl-main{ flex:1; min-width:0; }
+  .tl-title{ display:block; max-width:100%; background:none; border:none; padding:0; font-family:inherit; font-size:13.5px; color:var(--ink); text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl-title:hover{ color:var(--soon); text-decoration:underline; }
+  .tl-row.is-done .tl-title{ color:var(--muted); text-decoration:line-through; }
+  .tl-meta{ display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:11.5px; color:var(--muted); margin-top:1px; }
+  .today-grid{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-bottom:14px; align-items:start; }
+  .today-block{ padding:12px 14px; }
+  .today-head + .tl-row{ border-top:none; }
+  .today-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+  .today-count{ font-size:13px; font-weight:700; color:var(--muted); }
+  .today-count.is-overdue{ color:var(--overdue); }
+  .today-count.is-soon{ color:var(--soon); }
+  @media (max-width: 1100px){ .today-grid{ grid-template-columns:1fr; } }
   .ws-header{ display:flex; align-items:center; justify-content:space-between; gap:12px 16px; flex-wrap:wrap; margin-bottom:14px; }
   .ws-title .subtle{ margin-top:2px; }
   .ws-tools{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -1101,7 +1126,7 @@ function render(){
   root.innerHTML = `
     <div class="app">
       ${sidebarHtml()}
-      <main class="main"><div class="main-inner${view === 'home' ? ' wide' : ''}">${mainBody()}</div></main>
+      <main class="main"><div class="main-inner${['home','today','waiting'].includes(view) ? ' wide' : ''}">${mainBody()}</div></main>
     </div>
     ${toast ? `<div class="toast">${toast}</div>` : ''}
     ${quickAddHtml()}
@@ -1249,6 +1274,7 @@ function attachLockHandlers(){
 // Everything lives under More. Pin what you use to bring it to the top.
 // The three main views always sit at the top of the sidebar.
 const PRIMARY_NAV = [
+  { key:'today',   label:'Today',      ic:'clock' },
   { key:'home',    label:'Task board', ic:'list'  },
   { key:'waiting', label:'Waiting on', ic:'users' },
 ];
@@ -1285,7 +1311,7 @@ function navIsActive(key){
 function navRow(item, opts){
   const sub = opts && opts.sub;
   const count = navCount(item.key);
-  const overdue = item.key === 'home' ? state.tasks.filter(isOverdue).length : 0;
+  const overdue = item.key === 'today' ? state.tasks.filter(isOverdue).length : 0;
   const waitCount = item.key === 'waiting' ? state.tasks.filter(t => !t.done && t.waitingOn).length : 0;
   const attr = item.key === 'templates' ? `data-select-folder=""` : `data-nav="${item.key}"`;
   return `
@@ -1349,6 +1375,7 @@ function mainBody(){
   }
   if (view === 'home') return viewHome();
   if (view === 'waiting') return viewWaiting();
+  if (view === 'today') return viewToday();
   if (view === 'card') return viewCardDetail();
   if (view === 'tools') return viewTools();
   if (view === 'triage') return viewTriage();
@@ -1572,8 +1599,7 @@ function viewHome(){
     ${summaryRow(key)}
     ${waitingBadges()}
 
-    ${taskSearchQuery.trim() ? taskSearchResults() : `
-    ${homeCardsArea(key)}`}
+    ${resultsActive() ? taskResults() : homeCardsArea(key)}
   `;
 }
 
@@ -1592,6 +1618,7 @@ function workspaceHeader(title, sub){
       </div>
       <div class="ws-tools">
         <div class="ws-search">${icon('search',14)}<input id="task-search" placeholder="Search tasks" value="${escapeAttr(taskSearchQuery)}" aria-label="Search tasks" /></div>
+        <button data-filter-open class="btn btn-ghost btn-sm ws-add${resultsActive() ? ' on' : ''}" title="Filter and sort all tasks">${icon('list',13)} Filter</button>
         <button data-qa-open="" class="btn btn-primary btn-sm ws-add" title="Add a task (shortcut: N)">${icon('plus',13)} Add task</button>
         <button ${notif === 'default' ? 'data-reminder-notify' : ''} class="icon-btn" title="${bellTitle}" ${notif === 'default' ? '' : 'aria-disabled="true"'}>${icon(notif === 'granted' ? 'bell' : 'bellOff', 14)}</button>
         <button data-nav="categories" class="icon-btn" title="Manage cards (rename, add, remove)">${icon('gear',14)}</button>
@@ -1629,11 +1656,11 @@ function summaryRow(key){
   const m = summaryMetrics(key);
   const oldest = m.overdue.length ? daysBetween(m.overdue.map(t => t.dueDate).sort()[0], key) : 0;
   const tile = (filter, label, value, sub, cls) => `
-    <div class="metric${cls ? ' ' + cls : ''}">
+    <button class="metric${cls ? ' ' + cls : ''}${filterActive && taskFilter.status === filter ? ' on' : ''}" data-metric="${filter}" title="List these tasks">
       <span class="metric-label">${label}</span>
       <span class="metric-value">${value}</span>
       <span class="metric-sub">${sub}</span>
-    </div>`;
+    </button>`;
   return `
     <div class="summary-row">
       ${tile('open', 'Total remaining', m.remaining, `${m.open} open task${m.open === 1 ? '' : 's'}`, '')}
@@ -1755,6 +1782,10 @@ function createTask(f){
 function focusTask(id){
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
+  if (t.done) {   // finished tasks live behind the card
+    cardDetailId = taskCategoryIds(t)[0] || '__general'; cardSearch = ''; view = 'card'; render(); return;
+  }
+  filterActive = false;
   view = 'home'; taskSearchQuery = ''; cardDetailId = null;
   const k = normTaskText(t.text) || t.id;
   (taskCategoryIds(t).length ? taskCategoryIds(t) : ['__general']).forEach(c => taskGroupOpen.add(c + '|' + k));
@@ -1824,59 +1855,120 @@ function homeMeetingsPanel(){
   return sideSection('meetings', "Today's meetings", meets.length ? (remaining ? `${remaining} left` : 'All done') : '', refresh, body);
 }
 
-function taskSearchResults(){
-  const q = taskSearchQuery.trim().toLowerCase();
-  const hits = state.tasks.filter(t => (t.text||'').toLowerCase().includes(q));
-  const noteHits = [];
-  const cardHits = state.categories.filter(c => (c.label||'').toLowerCase().includes(q));
-  const total = hits.length + noteHits.length + cardHits.length;
-
-  if (!total) {
-    return `<div class="card empty"><div class="empty-icon">${icon('search',20)}</div><div>Nothing matches "${escapeHtml(taskSearchQuery)}".</div></div>`;
-  }
-
+// Search looks at the task wording, notes, who it's waiting on and its card
+// names. Filters and sort only change what is shown; nothing is written.
+let taskFilter = { status: 'open', cat: '', sort: 'smart' };
+let filterActive = false;   // a summary tile or the Filter button opened the list
+function resultsActive(){ return !!taskSearchQuery.trim() || filterActive; }
+const FILTER_STATUS = [['open','All open'], ['overdue','Overdue'], ['today','Due today'], ['soon','Due soon'], ['done','Completed'], ['all','Everything']];
+const SORTS = [['smart','Most urgent'], ['priority','Priority'], ['due','Due date'], ['recent','Recently added'], ['category','Category']];
+function taskMatchesStatus(t, st, key){
+  const soonEnd = keyFromDate(new Date(dateFromKey(key).getTime() + 3 * 86400000));
+  if (st === 'all') return true;
+  if (st === 'done') return t.done;
+  if (t.done) return false;
+  if (st === 'overdue') return !!t.dueDate && t.dueDate < key;
+  if (st === 'today') return t.dueDate === key;
+  if (st === 'soon') return !!t.dueDate && t.dueDate >= key && t.dueDate <= soonEnd;
+  return true;
+}
+const PRIO_RANK = { high: 0, normal: 1, low: 2 };
+// Most urgent: overdue (oldest first), then by due date, then undated by
+// priority and newest. Completed tasks sort by when they were finished.
+function sortTasks(list, how){
+  const due = t => t.dueDate || '9999-99-99';
+  const prio = t => PRIO_RANK[t.priority || 'normal'];
+  const created = t => t.createdDate || '';
+  const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  const by = {
+    smart: (a, b) => (a.done !== b.done ? (a.done ? 1 : -1) : 0) || (a.done ? cmp(b.completedDate || '', a.completedDate || '') : 0) || cmp(due(a), due(b)) || prio(a) - prio(b) || cmp(created(b), created(a)),
+    priority: (a, b) => prio(a) - prio(b) || cmp(due(a), due(b)),
+    due: (a, b) => cmp(due(a), due(b)) || prio(a) - prio(b),
+    recent: (a, b) => cmp(created(b), created(a)),
+    category: (a, b) => cmp(taskCardNames(a).toLowerCase(), taskCardNames(b).toLowerCase()) || cmp(due(a), due(b)),
+  }[how] || ((a, b) => 0);
+  return list.slice().sort(by);
+}
+function taskListRow(t){
+  const late = isOverdue(t), today = isDueToday(t);
   return `
-    <div class="card">
-      <label class="section">${total} result${total===1?'':'s'}</label>
-      <div style="margin-top:10px;">
-        ${cardHits.map(c => {
-          const key = todayKey();
-          const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
-          const open = state.tasks.filter(t => taskCategoryIds(t).includes(c.id) && !t.done).length;
-          return `
-          <div class="search-hit">
-            <span style="flex-shrink:0; color:var(--muted); margin-top:2px;">${icon('home',14)}</span>
-            <div style="flex:1;">
-              <div style="font-size:13.5px; font-weight:600;">${escapeHtml(c.label)}</div>
-              <div class="search-meta">Card · ${rec.assigned} assigned, ${rec.completed} done · ${open} open task${open===1?'':'s'}</div>
-            </div>
-            <button data-open-card="${c.id}" class="icon-btn" title="Open this card" style="width:26px;height:26px;flex-shrink:0;">${icon('chevronRight',13)}</button>
-          </div>`;
-        }).join('')}
-        ${noteHits.map(c => `
-          <div class="search-hit">
-            <div style="flex:1;">
-              <div style="font-size:13.5px;">${escapeHtml(c.noteText)}</div>
-              <div class="search-meta">Note on ${escapeHtml(c.label)}</div>
-            </div>
-          </div>
-        `).join('')}
-        ${hits.map(t => {
-          const cards = taskCategoryIds(t).map(id => (state.categories.find(c=>c.id===id)||{}).label).filter(Boolean);
-          const where = cards.length ? cards.join(', ') : 'General';
-          const when = t.done && t.completedDate ? `done ${t.completedDate}` : (t.createdDate ? `added ${t.createdDate}` : '');
-          return `
-          <div class="search-hit">
-            <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} style="width:14px;height:14px;margin-top:3px;flex-shrink:0;" />
-            <div style="flex:1;">
-              <div style="font-size:13.5px; ${t.done?'text-decoration:line-through;color:var(--muted);':''}">${escapeHtml(t.text)}</div>
-              <div class="search-meta">${escapeHtml(where)}${when ? ' · ' + escapeHtml(when) : ''}</div>
-            </div>
-          </div>`;
-        }).join('')}
+    <div class="tl-row${t.done ? ' is-done' : ''}">
+      <input type="checkbox" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''} title="${t.done ? 'Reopen' : 'Mark done'}" />
+      <div class="tl-main">
+        <button data-goto-task="${t.id}" class="tl-title" title="${t.done ? 'Completed — open its card history' : 'Show on the board'}">${escapeHtml(t.text)}</button>
+        <div class="tl-meta">
+          <span>${escapeHtml(taskCardNames(t))}</span>
+          ${t.priority === 'high' ? '<span class="prio-pill prio-high">High</span>' : t.priority === 'low' ? '<span class="prio-pill">Low</span>' : ''}
+          ${t.waitingOn ? `<span class="wait-pill">${escapeHtml(t.waitingOn)}${waitDays(t) !== null ? ' · ' + waitDays(t) + 'd' : ''}</span>` : ''}
+          ${t.done ? `<span>Done ${t.completedDate ? escapeHtml(dateFromKey(t.completedDate).toLocaleDateString(undefined, { month:'short', day:'numeric' })) : ''}</span>` : ''}
+        </div>
       </div>
+      ${!t.done && t.dueDate ? `<span class="status-badge ${late ? 'is-overdue' : today ? 'is-soon' : ''}">${escapeHtml(dueText(t))}</span>` : ''}
+    </div>`;
+}
+function taskResults(){
+  const key = todayKey();
+  const q = taskSearchQuery.trim().toLowerCase();
+  const hay = t => [t.text, t.notes, t.waitingOn, taskCardNames(t)].filter(Boolean).join(' ').toLowerCase();
+  let list = state.tasks.filter(t => (!q || hay(t).includes(q)) && taskMatchesStatus(t, taskFilter.status, key));
+  if (taskFilter.cat) list = list.filter(t => taskFilter.cat === '__general' ? taskCategoryIds(t).length === 0 : taskCategoryIds(t).includes(taskFilter.cat));
+  list = sortTasks(list, taskFilter.sort);
+  const cardHits = q ? state.categories.filter(c => (c.label || '').toLowerCase().includes(q)) : [];
+  const changed = taskFilter.status !== 'open' || taskFilter.cat || taskFilter.sort !== 'smart';
+  return `
+    <div class="card results">
+      <div class="results-bar">
+        <div class="chip-row">
+          ${FILTER_STATUS.map(([v, l]) => `<button data-filter-status="${v}" class="filter-chip${taskFilter.status === v ? ' on' : ''}">${l}</button>`).join('')}
+        </div>
+        <div class="results-controls">
+          <select data-filter-cat aria-label="Category">
+            <option value="">All categories</option>
+            <option value="__general" ${taskFilter.cat === '__general' ? 'selected' : ''}>General</option>
+            ${state.categories.map(c => `<option value="${c.id}" ${taskFilter.cat === c.id ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
+          </select>
+          <select data-filter-sort aria-label="Sort">
+            ${SORTS.map(([v, l]) => `<option value="${v}" ${taskFilter.sort === v ? 'selected' : ''}>Sort: ${l}</option>`).join('')}
+          </select>
+          <button data-filter-clear class="btn btn-ghost btn-sm" title="Clear search and filters, back to the board">${changed || q ? 'Clear' : 'Close'}</button>
+        </div>
+      </div>
+      <div class="results-count">${list.length} task${list.length === 1 ? '' : 's'}${q ? ` matching “${escapeHtml(taskSearchQuery.trim())}”` : ''}</div>
+      ${cardHits.map(c => `
+        <div class="tl-row">
+          <span style="color:var(--muted);">${icon('list',14)}</span>
+          <div class="tl-main"><button data-open-card="${c.id}" class="tl-title">${escapeHtml(c.label)}</button><div class="tl-meta"><span>Card</span></div></div>
+        </div>`).join('')}
+      ${list.length ? list.map(taskListRow).join('') : `<div class="empty" style="padding:28px 10px;"><div>No tasks match. ${changed || q ? '<button data-filter-clear class="link-btn">Clear filters</button>' : ''}</div></div>`}
+    </div>`;
+}
+
+// ---- Today: what to do next ----
+function viewToday(){
+  const key = todayKey();
+  carryForwardCounts(key);
+  const dateLabel = new Date().toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
+  if (resultsActive()) return `${workspaceHeader('Today', dateLabel)}${summaryRow(key)}${taskResults()}`;
+  const open = state.tasks.filter(t => !t.done && !t.waitingOn);   // waiting ones are in the Waiting on list below
+  const weekEnd = keyFromDate(new Date(dateFromKey(key).getTime() + 7 * 86400000));
+  const overdue = sortTasks(open.filter(t => t.dueDate && t.dueDate < key), 'due');
+  const dueToday = sortTasks(open.filter(t => t.dueDate === key), 'priority');
+  const upcoming = sortTasks(open.filter(t => (t.dueDate && t.dueDate > key && t.dueDate <= weekEnd) || (t.priority === 'high' && (!t.dueDate || t.dueDate > weekEnd))), 'smart');
+  const block = (title, list, empty, cls) => `
+    <div class="card today-block">
+      <div class="today-head"><label class="section" style="margin:0;">${title}</label><span class="today-count ${list.length ? cls : ''}">${list.length}</span></div>
+      ${list.length ? list.map(taskListRow).join('') : `<p class="side-empty" style="margin:6px 0 0;">${empty}</p>`}
+    </div>`;
+  return `
+    ${workspaceHeader('Today', dateLabel)}
+    ${summaryRow(key)}
+    <div class="today-grid">
+      ${block('Overdue', overdue, 'Nothing overdue.', 'is-overdue')}
+      ${block('Due today', dueToday, 'Nothing else due today.', 'is-soon')}
+      ${block('Coming up', upcoming, 'Nothing due in the next 7 days, and no high-priority tasks waiting.', '')}
     </div>
-  `;
+    ${waitingBadges()}
+    <p class="hint" style="margin:4px 2px 0;">Daily tasks, reminders and today's meetings are in the left column. Every queue is on the <button data-nav="home" class="link-btn" style="font-size:12px;">Task board</button>.</p>`;
 }
 
 // ---------------- weekly team goal ----------------
@@ -5375,6 +5467,21 @@ function attachHandlers(){
     const id = el.getAttribute('data-completed-toggle');
     if (completedOpen.has(id)) completedOpen.delete(id); else completedOpen.add(id);
     render();
+  });
+  document.querySelectorAll('[data-metric]').forEach(el => el.onclick = () => {
+    const f = el.getAttribute('data-metric');
+    taskFilter = { status: f, cat: '', sort: f === 'done' ? 'recent' : 'smart' };
+    filterActive = true; render();
+  });
+  const filterOpen = document.querySelector('[data-filter-open]');
+  if (filterOpen) filterOpen.onclick = () => { filterActive = !resultsActive(); if (!filterActive) taskSearchQuery = ''; render(); };
+  document.querySelectorAll('[data-filter-status]').forEach(el => el.onclick = () => { taskFilter.status = el.getAttribute('data-filter-status'); filterActive = true; render(); });
+  const fCat = document.querySelector('[data-filter-cat]');
+  if (fCat) fCat.onchange = () => { taskFilter.cat = fCat.value; filterActive = true; render(); };
+  const fSort = document.querySelector('[data-filter-sort]');
+  if (fSort) fSort.onchange = () => { taskFilter.sort = fSort.value; filterActive = true; render(); };
+  document.querySelectorAll('[data-filter-clear]').forEach(el => el.onclick = () => {
+    taskFilter = { status: 'open', cat: '', sort: 'smart' }; filterActive = false; taskSearchQuery = ''; render();
   });
   const waitMore = document.querySelector('[data-wait-more]');
   if (waitMore) waitMore.onclick = () => { waitingShowAll = !waitingShowAll; render(); };
