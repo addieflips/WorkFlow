@@ -7001,8 +7001,11 @@ function orphanData(){
   if (!o.batch) o.batch = { orphans: [], overrides: {}, inboxes: {}, tabOverride: '' };
   if (!o.batch.overrides) o.batch.overrides = {};
   if (!o.batch.inboxes) o.batch.inboxes = {};       // orphan id -> inbox picked by hand
-  if (!o.leaderFix || typeof o.leaderFix !== 'object') o.leaderFix = {};
-  if (!Array.isArray(o.priority)) o.priority = [];   // leader IDs that must get an orphan in the next pull  // leader id -> [lat, lon] | 'list' | { zip }
+  if (!o.leaderFix || typeof o.leaderFix !== 'object') o.leaderFix = {};  // leader id -> [lat, lon] | 'list' | { zip }
+  // Leaders who must get an orphan: { id, since }. They apply to orphans
+  // loaded after `since`, never to a pull already loaded or finished.
+  if (!Array.isArray(o.priority)) o.priority = [];
+  o.priority = o.priority.map(p => typeof p === 'object' ? p : { id: String(p), since: 0 });
   if (!o.used || typeof o.used !== 'object') o.used = { month: monthKey(), ids: [] };
   // A leader can get one orphan per month, so the list starts over each month.
   if (o.used.month !== monthKey()) o.used = { month: monthKey(), ids: [] };
@@ -7383,7 +7386,7 @@ function computeOrphanResults(){
   // month: each takes the closest unplaced orphan in their own country, or
   // the closest orphan from anywhere when their country has none today.
   const leaderRec = new Map(o.leaders.map((l, idx) => [String(l[0]), l]));
-  (o.priority || []).forEach(pid => {
+  (o.priority || []).filter(p => (o.batch.loadedStamp || 0) > (p.since || 0)).map(p => p.id).forEach(pid => {
     const l = leaderRec.get(String(pid));
     if (!l || taken.has(String(pid))) return;
     const zipC = orphanZipCountry(l[2]);
@@ -8320,12 +8323,15 @@ function orphanPriorityCard(rows){
   return `
     <div class="card" style="margin-bottom:16px;">
       <label class="section">Must get an orphan${list.length ? ' · ' + list.length : ''}</label>
-      <div class="hint" style="margin:0 0 8px;">Leader IDs here get the closest orphan in their country in the next pull, even with a 0 in Count, on the other tab, or already used this month. If their country has no orphan that pull, they get the closest orphan that has no leader in its own country, or failing that the closest one from anywhere. They come off the list when the pull is finished.</div>
-      ${list.map(id => {
+      <div class="hint" style="margin:0 0 8px;">Leader IDs here get the closest orphan in their country in the next pull you load after adding them (never one already loaded or finished), even with a 0 in Count, on the other tab, or already used this month. If their country has no orphan that pull, they get the closest orphan that has no leader in its own country, or failing that the closest one from anywhere. They come off the list when the pull is finished.</div>
+      ${list.map(p => {
+        const id = p.id;
+        const waits = !((o.batch.loadedStamp || 0) > (p.since || 0));
         const l = byId.get(String(id));
         const row = rows.find(r => r.leader && r.leader.id === String(id));
         const status = !l ? '<span class="orph-pill orph-pill-bad">Not in the leader list</span>'
           : row ? `<span class="orph-pill orph-pill-ok">Gets ${escapeHtml(row.id)} (${escapeHtml(row.match)}${row.miles != null ? ', ' + row.miles + ' mi' : ''})</span>`
+          : rows.length && waits ? '<span class="subtle" style="font-size:12.5px;">Starts with the next pull (the orphans loaded now were loaded before you added this)</span>'
           : rows.length ? '<span class="orph-pill orph-pill-warn">No orphan to give yet</span>'
           : '<span class="subtle" style="font-size:12.5px;">Waiting for the next pull</span>';
         return `
@@ -8405,6 +8411,7 @@ function orphanLoadOrphans(text, source){
     o.batch.overrides = {};
     o.batch.inboxes = {};
     o.batch.loadedAt = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+    o.batch.loadedStamp = Date.now();
     orphanPaste = '';
     o.batch.source = source || '';
     o.batch.columns = columns || '';
@@ -8435,7 +8442,7 @@ function attachOrphanHandlers(){
   const prioAdd = () => {
     const id = String(orphanPriorityInput || '').trim().replace(/\D/g, '');
     if (!id) { showToast('Type a leader ID'); return; }
-    if (!o.priority.includes(id)) o.priority.push(id);
+    if (!o.priority.some(p => p.id === id)) o.priority.push({ id, since: Date.now() });
     orphanPriorityInput = '';
     saveState(); render();
     showToast(id + ' will get an orphan in the next pull');
@@ -8448,7 +8455,7 @@ function attachOrphanHandlers(){
   if (prioBtn) prioBtn.onclick = prioAdd;
   document.querySelectorAll('[data-orph-prio-del]').forEach(el => el.onclick = () => {
     const id = el.getAttribute('data-orph-prio-del');
-    o.priority = o.priority.filter(x => x !== id);
+    o.priority = o.priority.filter(p => p.id !== id);
     saveState(); render();
   });
   const errClose = q('[data-orph-error-close]');
@@ -8785,7 +8792,7 @@ function attachOrphanHandlers(){
       `• The loaded orphans are cleared; the placed rows stay available to copy.`;
     if (!confirm(msg)) return;
     o.used.ids = [...new Set([...o.used.ids, ...leaderIds])];
-    o.priority = (o.priority || []).filter(id => !leaderIds.includes(String(id)));
+    o.priority = (o.priority || []).filter(p => !leaderIds.includes(String(p.id)));
     const range = orphanPullRange();
     o.pullLog.push({ date: todayKey(), tab: orphanTabToday(), placed: placed.length, from: range.from, to: range.to });
     // A second pull on the same day joins the first, so the emails go out once.
