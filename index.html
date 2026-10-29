@@ -127,6 +127,14 @@
   .home-side{ min-width:0; position:sticky; top:4px; max-height:calc(100vh - 40px); overflow-y:auto; padding-right:2px; }
   @media (max-width: 600px){ .home-side{ position:static; max-height:none; overflow:visible; } }
   .home-cards{ min-width:0; align-items:stretch; }
+  .home-main{ min-width:0; }
+  .home-cards .dcard{ padding:15px 15px 14px; border-radius:14px; }
+  .quiet-strip{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:12px; padding:10px 12px; border:1px dashed var(--border); border-radius:12px; }
+  .quiet-label{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-right:4px; }
+  .quiet-chip{ font-family:inherit; font-size:12.5px; font-weight:600; color:var(--ink); background:#fff; border:1px solid var(--border); border-radius:999px; padding:4px 11px; cursor:pointer; }
+  .quiet-chip:hover{ border-color:var(--primary); color:var(--primary-dark); }
+  .task-group-toggle{ align-self:flex-start; background:none; border:none; padding:0 0 0 26px; margin-top:-2px; cursor:pointer; font-family:inherit; font-size:11.5px; font-weight:600; color:var(--muted); }
+  .task-group-toggle:hover{ color:var(--primary-dark); text-decoration:underline; }
   .home-cards .dcard{ height:100%; }
   @media (max-width: 1180px){ .home-split{ grid-template-columns:260px 1fr; } }
   @media (max-width: 1000px){ .home-split{ grid-template-columns:240px 1fr; gap:12px; } }
@@ -167,6 +175,12 @@
   .orph-ll{ display:inline-flex; gap:4px; align-items:center; }
   .orph-ll input{ width:80px; padding:4px 7px; font-size:12.5px; }
   .orph-pill{ font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px; white-space:nowrap; background:var(--border); color:var(--muted); }
+  .rem-row{ display:flex; align-items:center; gap:7px; padding:3px 0; font-size:13px; }
+  .rem-text{ font-weight:600; flex-shrink:0; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rem-when{ margin-left:auto; min-width:0; font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rem-del{ opacity:0; }
+  .rem-row:hover .rem-del, .rem-row:focus-within .rem-del{ opacity:1; }
+  @media (hover: none){ .rem-del{ opacity:1; } }
   .reminder-pop{ position:fixed; inset:0; z-index:1000; background:rgba(32,34,58,.82); display:flex; align-items:center; justify-content:center; padding:16px; animation:remFade .2s ease-out; }
   .reminder-pop-item{ background:#fff; border-top:8px solid #D9661F; border-radius:18px; padding:32px 28px; box-shadow:0 20px 60px rgba(0,0,0,.35); width:460px; max-width:100%; text-align:center; animation:remPulse 1.6s ease-in-out infinite; }
   @keyframes remFade{ from{ opacity:0; } to{ opacity:1; } }
@@ -331,14 +345,14 @@
   .deadline-pill-late{ color:#C13B30; }
   .lead-q{ font-size:14px; line-height:1.6; background:#fff; border:1px solid #F2D398; border-radius:9px; padding:10px 12px; }
   .dcard{ position:relative; transition:border-color .15s ease, background .15s ease; }
-  .tone-red{ border-color:#F0B4AE; background:#FEF6F5; }
+  .tone-red{ box-shadow:inset 3px 0 0 #C13B30; }
   .tone-red .stat-big .num{ color:#C13B30; }
-  .tone-amber{ border-color:#F2D398; background:#FFFBF2; }
+  .tone-amber{ box-shadow:inset 3px 0 0 #C98A12; }
   .tone-amber .stat-big .num{ color:#A8730F; }
-  .tone-blue{ border-color:#A8C6E8; background:#F5F9FD; }
+  .tone-blue{ box-shadow:inset 3px 0 0 #185FA5; }
   .tone-blue .stat-big .num{ color:#185FA5; }
   .tone-blue .tone-flag{ background:#185FA5; color:#fff; }
-  .tone-green{ border-color:#A9D8BF; background:#F5FBF7; }
+  .tone-green{ box-shadow:inset 3px 0 0 #2F7A4F; }
   .tone-green .stat-big .num{ color:#2F7A4F; }
   .tone-flag{ position:absolute; top:-8px; left:14px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:999px; }
   .tone-red .tone-flag{ background:#C13B30; color:#fff; }
@@ -1214,18 +1228,69 @@ function viewHome(){
     ${taskSearchQuery.trim() ? taskSearchResults() : `
     <div class="home-split">
       <div class="home-side">
+        ${homeMeetingsPanel()}
+        ${dueTodayPanel()}
         ${dailyTasksPanel()}
         ${remindersPanel()}
-        ${dueTodayPanel()}
-        ${homeMeetingsPanel()}
         ${goalPanel()}
       </div>
-      <div class="grid home-cards">
-        ${sortedHomeCards(key).map(it => it.id === null ? generalCard(key, it.tone, it.due) : categoryCard(it.cat, key, it.tone, it.due)).join('')}
-        ${addCardTile()}
-      </div>
+      ${homeCardsArea(key)}
     </div>`}
   `;
+}
+
+// Cards with nothing on them (no open tasks, nothing remaining, nothing dated)
+// fold into a row of chips under the grid so the cards with work fit on screen.
+// A chip opens its card in place; a card with work never folds.
+let quietOpen = new Set();
+function cardIsQuiet(it, key){
+  if (it.rank !== 2) return false;
+  if (it.id === null) return !state.tasks.some(t => !t.done && taskCategoryIds(t).length === 0);
+  return !state.tasks.some(t => !t.done && taskCategoryIds(t).includes(it.id));
+}
+function homeCardsArea(key){
+  const items = sortedHomeCards(key);
+  const quiet = items.filter(it => cardIsQuiet(it, key));
+  const shown = items.filter(it => !quiet.includes(it) || quietOpen.has(it.id === null ? '__general' : it.id));
+  const folded = quiet.filter(it => !shown.includes(it));
+  const card = it => it.id === null
+    ? generalCard(key, it.tone, it.due, quiet.includes(it))
+    : categoryCard(it.cat, key, it.tone, it.due, quiet.includes(it));
+  return `
+    <div class="home-main">
+      <div class="grid home-cards">
+        ${shown.map(card).join('')}
+        ${addCardTile()}
+      </div>
+      ${folded.length ? `
+        <div class="quiet-strip">
+          <span class="quiet-label">Nothing on · ${folded.length}</span>
+          ${folded.map(it => `<button data-quiet-open="${it.id === null ? '__general' : it.id}" class="quiet-chip" title="Open this card">${escapeHtml(it.id === null ? 'General' : it.cat.label)}</button>`).join('')}
+        </div>` : ''}
+    </div>`;
+}
+
+// Open tasks with the same wording in one card (e.g. a weekly "Split AT's"
+// with a due date each week) show as one row, soonest first; the rest fold
+// under "+N more". Ungrouped rows render exactly as before.
+let taskGroupOpen = new Set();
+function cardTaskRows(list, cardId){
+  const groups = new Map();
+  list.forEach(t => {
+    const k = normTaskText(t.text) || t.id;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  });
+  const out = [];
+  groups.forEach((ts, k) => {
+    if (ts.length === 1) { out.push(cardTaskRow(ts[0], cardId === '__general' ? null : cardId)); return; }
+    ts.sort((a, b) => (a.dueDate || '9999') < (b.dueDate || '9999') ? -1 : (a.dueDate || '9999') > (b.dueDate || '9999') ? 1 : 0);
+    const gk = cardId + '|' + k, open = taskGroupOpen.has(gk);
+    const rows = open ? ts : ts.slice(0, 1);
+    rows.forEach(t => out.push(cardTaskRow(t, cardId === '__general' ? null : cardId, { hideDupe: !open })));
+    out.push(`<button data-task-group="${escapeAttr(gk)}" class="task-group-toggle">${open ? 'Show fewer' : '+' + (ts.length - 1) + ' more'}</button>`);
+  });
+  return out.join('');
 }
 
 function meetingEnded(ev){
@@ -1603,6 +1668,8 @@ function remindersPanel(){
   const list = state.reminders || [];
   const notif = window.Notification ? Notification.permission : 'unsupported';
   const fmt = t => { const [h, m] = String(t).split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }); };
+  // "7:30a", "2p": fits on one line next to the reminder.
+  const shortTime = t => { const [h, m] = String(t).split(':').map(Number); return ((h % 12) || 12) + (m ? ':' + String(m).padStart(2, '0') : '') + (h < 12 ? 'a' : 'p'); };
   const everyLabel = n => n % 60 === 0 ? (n === 60 ? 'Every hour' : 'Every ' + n / 60 + ' hours') : 'Every ' + n + ' min';
   return `
     <div class="card" style="margin-bottom:14px;">
@@ -1612,13 +1679,11 @@ function remindersPanel(){
       </div>
       <div style="margin-top:10px;">
         ${list.map(r => `
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-            <input type="checkbox" data-reminder-on="${r.id}" ${r.on ? 'checked' : ''} title="On / off" style="width:auto;" />
-            <div style="flex:1; min-width:0; ${r.on ? '' : 'opacity:.55;'}">
-              <div style="font-size:13.5px; font-weight:600;">${escapeHtml(r.text)}</div>
-              <div class="subtle" style="font-size:12px;">${everyLabel(Number(r.every) || 60)}, ${fmt(r.from)}–${fmt(r.to)}${r.weekdays ? ', weekdays' : ''}</div>
-            </div>
-            <button data-reminder-del="${r.id}" class="icon-btn" title="Delete" style="width:24px;height:24px;">${icon('trash', 11)}</button>
+          <div class="rem-row" style="${r.on ? '' : 'opacity:.55;'}">
+            <input type="checkbox" data-reminder-on="${r.id}" ${r.on ? 'checked' : ''} title="${r.on ? 'On — click to pause' : 'Paused — click to turn on'}" style="width:auto;" />
+            <span class="rem-text" title="${escapeAttr(everyLabel(Number(r.every) || 60) + ', ' + fmt(r.from) + '–' + fmt(r.to) + (r.weekdays ? ', weekdays' : ''))}">${escapeHtml(r.text)}</span>
+            <span class="rem-when">${everyLabel(Number(r.every) || 60).replace('Every hour', 'hourly').replace('Every ', '')} · ${shortTime(r.from)}–${shortTime(r.to)}</span>
+            <button data-reminder-del="${r.id}" class="icon-btn rem-del" title="Delete" style="width:22px;height:22px;">${icon('trash', 10)}</button>
           </div>`).join('')}
         ${reminderAdding || !list.length ? `
           <div style="display:grid; gap:6px;">
@@ -1633,15 +1698,16 @@ function remindersPanel(){
             <label class="subtle" style="font-size:12.5px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="rem-weekdays" checked style="width:auto;" /> Weekdays only</label>
             <button data-reminder-save class="btn btn-primary" style="padding:6px 12px; font-size:13px; justify-self:start;">Add reminder</button>
           </div>` : ''}
-        ${list.length ? `<p class="hint" style="margin:8px 0 0;">Covers the screen until you click Done, while this site is open in a tab.${notif === 'default' ? ` <button data-reminder-notify class="link-btn">Also show desktop pop-ups</button> so you see them in other windows.` : notif === 'denied' ? ' Desktop pop-ups are blocked in your browser settings, so they show on this page only.' : notif === 'granted' ? ' Desktop pop-ups are on.' : ''}</p>` : ''}
+        ${list.length && (reminderAdding || notif === 'default') ? `<p class="hint" style="margin:6px 0 0;">${reminderAdding ? 'Covers the screen until you click Done, while this site is open in a tab. ' : ''}${notif === 'default' ? `<button data-reminder-notify class="link-btn">Turn on desktop pop-ups</button> to see them in other windows too.` : ''}</p>` : ''}
       </div>
     </div>
   `;
 }
 
 function dueTodayPanel(){
-  const overdue = state.tasks.filter(isOverdue);
-  const today = state.tasks.filter(isDueToday);
+  // Tasks waiting on someone are already listed in the Waiting on banner.
+  const overdue = state.tasks.filter(t => isOverdue(t) && !t.waitingOn);
+  const today = state.tasks.filter(t => isDueToday(t) && !t.waitingOn);
   const nothing = !overdue.length && !today.length;
 
   const block = (title, list, cls) => list.length ? `
@@ -1655,7 +1721,7 @@ function dueTodayPanel(){
       <label class="section">Needs attention</label>
       <div style="margin-top:10px;">
         ${nothing
-          ? `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing overdue or due today. Anything with a due date shows up here.</p>`
+          ? `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing overdue or due today${state.tasks.some(t => (isOverdue(t) || isDueToday(t)) && t.waitingOn) ? ' (besides what is under Waiting on)' : ''}.</p>`
           : `${block('Overdue', overdue, 'color:#D0453A;')}
              ${block('Due today', today, '')}`}
       </div>
@@ -1717,11 +1783,11 @@ function waitingInlineManager(scope){
     </div>`;
 }
 
-function cardTaskRow(t, currentCatId){
+function cardTaskRow(t, currentCatId, opts){
   const others = taskCategoryIds(t).filter(id => id !== currentCatId)
     .map(id => (state.categories.find(c=>c.id===id)||{}).label).filter(Boolean);
   const dupes = openDuplicatesOf(t);
-  const dupeBadge = dupes.length
+  const dupeBadge = dupes.length && !(opts && opts.hideDupe)
     ? `<button data-task-dedupe="${t.id}" class="dupe-pill" title="There ${dupes.length===1?'is':'are'} ${dupes.length} other open cop${dupes.length===1?'y':'ies'} of this task. Click to remove ${dupes.length===1?'it':'them'}.">${dupes.length+1} copies</button>`
     : '';
   const badges = `${others.length ? `<span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dupeBadge}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}`;
@@ -1753,7 +1819,7 @@ function dueBadge(t){
   return ` <span class="due-pill">${escapeHtml(dateFromKey(t.dueDate).toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>`;
 }
 
-function generalCard(key, tone, due){
+function generalCard(key, tone, due, foldable){
   const tasks = state.tasks.filter(t => taskCategoryIds(t).length === 0);
   // The card shows what's still live plus anything checked off today, so ticking
   // something doesn't make it vanish out from under you. Older finished tasks
@@ -1765,11 +1831,12 @@ function generalCard(key, tone, due){
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       <div class="dcard-head">
         <button data-open-card="__general" class="dcard-title dcard-title-btn" title="Open this card">General</button>
+        ${foldable ? `<button data-quiet-fold="__general" class="icon-btn" title="Fold back into the row below" style="width:26px;height:26px;">${icon('chevronUp',13)}</button>` : ''}
       </div>
       <div class="stat-big"><span class="num">${openCount}</span><span class="lbl">open</span></div>
       <p class="hint" style="margin:2px 0 10px;">Tasks not tied to a category</p>
       <div class="dcard-tasks">
-        ${visible.length ? visible.map(t => cardTaskRow(t, null)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing here.</p>`}
+        ${visible.length ? cardTaskRows(visible, '__general') : `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing here.</p>`}
       </div>
       ${filed ? `<button data-open-card="__general" class="card-filed-link">${filed} finished · search them</button>` : ''}
       <input data-card-task-input="__general" placeholder="Add a general task..." class="card-add-task" />
@@ -1777,7 +1844,7 @@ function generalCard(key, tone, due){
   `;
 }
 
-function categoryCard(c, key, tone, due){
+function categoryCard(c, key, tone, due, foldable){
   ensureCategoryDefaults(c);
   const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
   const remaining = Math.max(0, rec.assigned - rec.completed);
@@ -1797,6 +1864,7 @@ function categoryCard(c, key, tone, due){
       <div class="dcard-head">
         <button data-open-card="${c.id}" class="dcard-title dcard-title-btn" title="Open this card">${escapeHtml(c.label)}</button>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
+        ${foldable ? `<button data-quiet-fold="${c.id}" class="icon-btn" title="Fold back into the row below" style="width:26px;height:26px;">${icon('chevronUp',13)}</button>` : ''}
         <button data-pin-toggle="${c.id}" class="icon-btn" title="Change pinned stat" style="width:26px;height:26px;">${icon('pin',13)}</button>
         <div class="pin-menu${openPinMenu === c.id ? ' open' : ''}" data-pin-menu="${c.id}">
           ${PIN_OPTIONS.map(o => `<button data-pin-choose="${c.id}" data-choose-val="${o.val}">${o.label}</button>`).join('')}
@@ -1811,7 +1879,7 @@ function categoryCard(c, key, tone, due){
       </div>
       <div class="dcard-bar"><div class="dcard-bar-fill" style="width:${pct}%;"></div></div>
       <div class="dcard-tasks">
-        ${visible.length ? visible.map(t => cardTaskRow(t, c.id)).join('') : `<p class="subtle" style="margin:0; font-size:12.5px;">No tasks yet.</p>`}
+        ${visible.length ? cardTaskRows(visible, c.id) : `<p class="subtle" style="margin:0; font-size:12.5px;">No tasks yet.</p>`}
       </div>
       ${filed ? `<button data-open-card="${c.id}" class="card-filed-link">${filed} finished · search them</button>` : ''}
       <input data-card-task-input="${c.id}" placeholder="Add a task to ${escapeAttr(c.label)}..." class="card-add-task" />
@@ -4746,6 +4814,14 @@ function attachHandlers(){
     const categoryIds = raw === '__general' ? [] : [raw];
     state.tasks.push({ id: uid('task'), text, done:false, createdDate: todayKey(), completedDate:null, categoryIds });
     saveState(); render();
+  });
+
+  document.querySelectorAll('[data-quiet-open]').forEach(el => el.onclick = () => { quietOpen.add(el.getAttribute('data-quiet-open')); render(); });
+  document.querySelectorAll('[data-quiet-fold]').forEach(el => el.onclick = (e) => { e.stopPropagation(); quietOpen.delete(el.getAttribute('data-quiet-fold')); render(); });
+  document.querySelectorAll('[data-task-group]').forEach(el => el.onclick = () => {
+    const k = el.getAttribute('data-task-group');
+    if (taskGroupOpen.has(k)) taskGroupOpen.delete(k); else taskGroupOpen.add(k);
+    render();
   });
 
   const remNew = document.querySelector('[data-reminder-new]');
