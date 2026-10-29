@@ -385,6 +385,81 @@
   .dupe-pill:hover{ background:#C13B30; color:#fff; }
 
   /* ---------- Clean & Modern theme (overrides the older rules above) ---------- */
+  /* light sidebar: navigation on top, the day's panels below */
+  .sidebar{ width:280px; background:#fff; border-right:1px solid var(--border); padding:14px 12px 10px; }
+  .sidebar .logo-text{ color:var(--ink); }
+  .nav-item{ color:var(--ink); }
+  .nav-item:hover{ background:var(--bg); }
+  .nav-item.active{ background:var(--primary-soft) !important; color:var(--ink) !important; box-shadow:inset 3px 0 0 var(--ink) !important; }
+  .nav-item .count, .nav-item.active .count{ color:var(--muted) !important; }
+  .nav-item-sub{ color:var(--ink); }
+  .nav-item-sub.active{ background:var(--primary-soft) !important; }
+  .nav-more, .nav-add, .nav-item-quiet{ color:var(--muted); }
+  .sidebar .hint{ color:var(--muted); }
+  .nav-pin{ color:#D2CEC8; }
+  .nav-pin.on{ color:var(--ink) !important; }
+  .nav-pin:hover{ background:var(--bg) !important; color:var(--ink) !important; }
+  .nav-bottom{ margin-top:6px; border-top:1px solid var(--border); padding-top:6px; }
+  .build-stamp{ color:#B3B0AA; margin-top:auto; }
+  .side-panels{ border-top:1px solid var(--border); margin-top:8px; }
+  .sidebar input[type=checkbox]{ width:auto; flex-shrink:0; margin:0; }
+  .side-sec{ border-bottom:1px solid var(--border); padding:8px 2px; }
+  .side-sec-head{ display:flex; align-items:center; gap:6px; }
+  .side-sec-title{ flex:1; min-width:0; display:flex; align-items:center; gap:6px; background:none; border:none; padding:4px 2px; cursor:pointer; font-family:inherit; font-size:13.5px; font-weight:600; color:var(--ink); text-align:left; border-radius:6px; }
+  .side-sec-title svg{ color:var(--muted); }
+  .side-sec-meta{ margin-left:auto; font-size:11.5px; font-weight:600; color:var(--muted); }
+  .meta-overdue{ color:var(--overdue); }
+  .side-act{ width:24px !important; height:24px !important; flex-shrink:0; }
+  .side-sec-body{ padding:4px 2px 2px; }
+  .side-empty{ margin:2px 0 6px; font-size:12px; color:var(--muted); }
+  .side-add{ font-size:12.5px !important; padding:5px 8px !important; margin-top:4px; }
+  .side-link{ background:none; border:none; padding:2px 0; font-family:inherit; font-size:12px; color:var(--soon); cursor:pointer; }
+  .side-link:hover{ text-decoration:underline; }
+  .side-goal{ padding:10px 0 4px; }
+  .side-goal .card{ box-shadow:none; padding:12px; }
+  .daily-row{ display:flex; align-items:center; gap:8px; padding:3px 2px; font-size:13px; cursor:pointer; border-radius:6px; }
+  .daily-row:hover{ background:var(--bg); }
+  .daily-row.is-done span{ text-decoration:line-through; color:var(--muted); }
+  .daily-edit-row{ display:flex; align-items:center; gap:4px; margin-bottom:4px; }
+  .daily-edit-row input:not([type]){ flex:1; min-width:0; font-size:12.5px; padding:4px 7px; }
+  .daily-wd{ display:inline-flex; align-items:center; gap:4px; font-size:11.5px; color:var(--muted); cursor:pointer; white-space:nowrap; }
+  .rem-row{ display:flex; align-items:flex-start; gap:7px; padding:3px 0; }
+  .rem-row > input{ margin-top:3px; }
+  .rem-row.is-off .rem-main{ opacity:.55; }
+  .rem-main{ flex:1; min-width:0; display:flex; flex-direction:column; align-items:flex-start; background:none; border:none; padding:0; cursor:pointer; font-family:inherit; text-align:left; color:var(--ink); }
+  .rem-main:hover .rem-text{ text-decoration:underline; }
+  .rem-text{ font-size:13px; font-weight:600; max-width:100%; white-space:normal; flex-shrink:1; }
+  .rem-when{ margin-left:0; font-size:11.5px; color:var(--muted); white-space:normal; }
+  .rem-form{ display:grid; gap:6px; margin-top:6px; padding:8px; border:1px solid var(--border); border-radius:8px; }
+  .rem-form input, .rem-form select{ font-size:12.5px; padding:5px 7px; }
+  .rem-form-row{ display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+  .rem-form-row input[type=time], .rem-form-row select{ width:auto; }
+  .btn-sm{ padding:5px 11px; font-size:12.5px; }
+  .att-row{ display:flex; flex-direction:column; gap:2px; width:100%; background:none; border:none; border-radius:6px; padding:5px 4px; cursor:pointer; font-family:inherit; text-align:left; color:var(--ink); }
+  .att-row:hover{ background:var(--bg); }
+  .att-text{ font-size:13px; line-height:1.35; }
+  .att-meta{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11.5px; color:var(--muted); }
+  .status-badge{ font-size:10.5px; font-weight:600; border-radius:999px; padding:1px 7px; background:var(--neutral-soft); color:#5F5D59; white-space:nowrap; }
+  .status-badge.is-overdue{ background:var(--overdue-soft); color:var(--overdue); }
+  .status-badge.is-soon{ background:var(--soon-soft); color:var(--soon); }
+  .status-badge.is-ok{ background:var(--ok-soft); color:var(--ok); }
+  .sidebar .meet-row{ margin-bottom:5px; }
+  .task-flash{ animation:taskFlash 1.6s ease-out; border-radius:6px; }
+  @keyframes taskFlash{ 0%,40%{ background:var(--soon-soft); box-shadow:0 0 0 2px #CFDDF0; } 100%{ background:transparent; box-shadow:none; } }
+
+  /* work queues: up to five columns, cards only as tall as their content */
+  .main{ padding:22px 24px 48px; }
+  .home-cards{ grid-template-columns:repeat(auto-fill, minmax(max(215px, calc((100% - 48px) / 5)), 1fr)); align-items:start; }
+  .home-cards .dcard{ height:auto; }
+  @media (max-width: 1100px){ .home-cards{ grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 900px){
+    .app{ flex-direction:column; height:auto; min-height:100vh; overflow:visible; }
+    .sidebar{ width:100%; border-right:none; border-bottom:1px solid var(--border); overflow:visible; flex-direction:column; flex-wrap:nowrap; }
+    .main{ overflow:visible; padding:16px 16px 40px; }
+    .home-cards{ grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px){ .home-cards{ grid-template-columns:1fr; } }
+
   body{ font-size:14px; -webkit-font-smoothing:antialiased; }
   input[type=checkbox], input[type=radio]{ accent-color:var(--ink); cursor:pointer; }
   ::-webkit-scrollbar-thumb{ background:#DAD6D0; }
@@ -403,7 +478,7 @@
   .card, .tpl-card{ border-radius:12px; box-shadow:var(--shadow); }
   .card{ padding:16px; }
   .home-cards .dcard{ padding:14px 14px 13px; border-radius:12px; }
-  .addcard-tile{ border-radius:12px; border-width:1px; min-height:150px; }
+  .addcard-tile{ border-radius:12px; border-width:1px; min-height:96px; }
   .quiet-strip{ border-radius:12px; background:transparent; }
 
   /* controls: one shape, one focus ring, clear hover and disabled states */
@@ -427,17 +502,9 @@
   .card-add-task{ height:30px; }
 
   /* sidebar */
-  .sidebar{ border-right:none; }
   .logo-mark{ background:var(--brand); }
-  .sidebar .logo-text{ color:#fff; }
   .nav-item{ border-radius:8px; }
-  .nav-item.active{ background:rgba(255,255,255,.12); color:#fff; box-shadow:inset 3px 0 0 #fff; }
-  .nav-item.active .count{ color:var(--sidebar-ink); }
-  .nav-item-sub.active{ background:rgba(255,255,255,.08); }
-  .nav-pin.on{ color:#fff; }
-  .nav-pin:hover{ background:var(--sidebar-hover); color:var(--sidebar-ink); }
   .nav-badge{ background:var(--overdue); }
-  .nav-bottom{ border-top-color:var(--sidebar-hover); }
 
   /* progress bars: thin */
   .dcard-bar{ height:4px; border-radius:2px; background:#EFECE8; }
@@ -1157,15 +1224,23 @@ function sidebarHtml(){
             ${NAV_ITEMS.map(i => navRow(i, { sub:true })).join('')}
             <p class="hint" style="margin:6px 0 2px 8px;">Tap a pin to keep it at the top.</p>
           </div>` : ''}
-        <div class="build-stamp" title="Which version of Dispatch is loaded">Build ${BUILD_ID}</div>
       </div>
+
+      <div class="side-panels">
+        ${dailyTasksPanel()}
+        ${remindersPanel()}
+        ${dueTodayPanel()}
+        ${homeMeetingsPanel()}
+        <div class="side-goal">${goalPanel()}</div>
+      </div>
+      <div class="build-stamp" title="Which version of Dispatch is loaded">Build ${BUILD_ID}</div>
     </aside>
   `;
 }
 
 function mainBody(){
   // Both Home and the calendar show meetings, so whichever loads first fetches.
-  if ((view === 'home' || view === 'calendar') && outlookStatus === 'idle') {
+  if (outlookStatus === 'idle') {
     setTimeout(() => loadOutlook(), 0);
   }
   if (view === 'home') return viewHome();
@@ -1348,48 +1423,37 @@ function viewHome(){
     ${waitingBadges()}
 
     ${taskSearchQuery.trim() ? taskSearchResults() : `
-    <div class="home-split">
-      <div class="home-side">
-        ${homeMeetingsPanel()}
-        ${dueTodayPanel()}
-        ${dailyTasksPanel()}
-        ${remindersPanel()}
-        ${goalPanel()}
-      </div>
-      ${homeCardsArea(key)}
-    </div>`}
+    ${homeCardsArea(key)}`}
   `;
 }
 
-// Cards with nothing on them (no open tasks, nothing remaining, nothing dated)
-// fold into a row of chips under the grid so the cards with work fit on screen.
-// A chip opens its card in place; a card with work never folds.
-let quietOpen = new Set();
-function cardIsQuiet(it, key){
-  if (it.rank !== 2) return false;
-  if (it.id === null) return !state.tasks.some(t => !t.done && taskCategoryIds(t).length === 0);
-  return !state.tasks.some(t => !t.done && taskCategoryIds(t).includes(it.id));
-}
+// Every queue shows, busiest first (cardPriority); empty ones end up last and
+// stay short because the grid no longer stretches cards to the tallest.
 function homeCardsArea(key){
-  const items = sortedHomeCards(key);
-  const quiet = items.filter(it => cardIsQuiet(it, key));
-  const shown = items.filter(it => !quiet.includes(it) || quietOpen.has(it.id === null ? '__general' : it.id));
-  const folded = quiet.filter(it => !shown.includes(it));
-  const card = it => it.id === null
-    ? generalCard(key, it.tone, it.due, quiet.includes(it))
-    : categoryCard(it.cat, key, it.tone, it.due, quiet.includes(it));
+  const card = it => it.id === null ? generalCard(key, it.tone, it.due) : categoryCard(it.cat, key, it.tone, it.due);
   return `
-    <div class="home-main">
-      <div class="grid home-cards">
-        ${shown.map(card).join('')}
-        ${addCardTile()}
-      </div>
-      ${folded.length ? `
-        <div class="quiet-strip">
-          <span class="quiet-label">Nothing on · ${folded.length}</span>
-          ${folded.map(it => `<button data-quiet-open="${it.id === null ? '__general' : it.id}" class="quiet-chip" title="Open this card">${escapeHtml(it.id === null ? 'General' : it.cat.label)}</button>`).join('')}
-        </div>` : ''}
+    <div class="grid home-cards">
+      ${sortedHomeCards(key).map(card).join('')}
+      ${addCardTile()}
     </div>`;
+}
+
+// Shows a task on the board: opens any group hiding it, opens its details,
+// scrolls to it and highlights it briefly. Nothing about the task changes.
+function focusTask(id){
+  const t = state.tasks.find(x => x.id === id);
+  if (!t) return;
+  view = 'home'; taskSearchQuery = ''; cardDetailId = null;
+  const k = normTaskText(t.text) || t.id;
+  (taskCategoryIds(t).length ? taskCategoryIds(t) : ['__general']).forEach(c => taskGroupOpen.add(c + '|' + k));
+  editingTaskId = id;
+  render();
+  const el = document.querySelector(`[data-task-row="${CSS.escape(id)}"]`);
+  if (el) {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('task-flash');
+    setTimeout(() => el.classList.remove('task-flash'), 1600);
+  }
 }
 
 // Open tasks with the same wording in one card (e.g. a weekly "Split AT's"
@@ -1422,47 +1486,30 @@ function meetingEnded(ev){
 }
 
 function homeMeetingsPanel(){
-  if (outlookStatus === 'off' || outlookStatus === 'loading' || outlookStatus === 'idle') return '';
-
-  if (outlookStatus === 'error') {
-    return `
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
-        <span class="subtle" style="font-size:12.5px;">Meetings didn't load.</span>
-        <button data-outlook-refresh class="btn btn-ghost" style="padding:3px 9px; font-size:12px;">Retry</button>
-      </div>`;
+  if (outlookStatus === 'off') return '';   // no calendar feed configured
+  const refresh = `<button data-outlook-refresh class="icon-btn side-act" title="Refresh meetings" ${outlookStatus === 'loading' ? 'disabled' : ''}>${icon('refresh',11)}</button>`;
+  if (outlookStatus === 'error' || outlookStatus === 'loading' || outlookStatus === 'idle') {
+    const body = outlookStatus === 'error'
+      ? `<p class="side-empty">Meetings didn't load. <button data-outlook-refresh class="link-btn">Retry</button></p>`
+      : `<p class="side-empty">Loading meetings…</p>`;
+    return sideSection('meetings', "Today's meetings", '', refresh, body);
   }
-
   const meets = meetingsOn(todayKey());
-  if (!meets.length) return '';
-
   // The first meeting that hasn't finished yet gets the emphasis.
   const nextIdx = meets.findIndex(ev => !meetingEnded(ev));
   const remaining = meets.filter(ev => !meetingEnded(ev)).length;
-
-  return `
-    <div class="card" style="margin-bottom:14px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <label class="section" style="margin:0;">Today's meetings · ${meets.length}</label>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${remaining ? `<span class="subtle" style="font-size:12.5px;">${remaining} left</span>` : `<span class="subtle" style="font-size:12.5px;">All done</span>`}
-          <button data-outlook-refresh class="icon-btn" title="Refresh meetings" style="width:24px;height:24px;">${icon('refresh',11)}</button>
+  const body = meets.length ? meets.map((ev, i) => {
+    const done = meetingEnded(ev);
+    return `
+      <div class="meet-row${done?' meet-done':''}${i===nextIdx?' meet-next':''}">
+        <div class="meet-time">${escapeHtml(meetingTime(ev))}</div>
+        <div style="min-width:0;">
+          <div class="meet-title">${escapeHtml(ev.title)}</div>
+          ${ev.location ? `<div class="meet-loc">${escapeHtml(ev.location)}</div>` : ''}
         </div>
-      </div>
-      <div style="margin-top:10px;">
-        ${meets.map((ev, i) => {
-          const done = meetingEnded(ev);
-          return `
-            <div class="meet-row${done?' meet-done':''}${i===nextIdx?' meet-next':''}">
-              <div class="meet-time">${escapeHtml(meetingTime(ev))}</div>
-              <div style="min-width:0;">
-                <div class="meet-title">${escapeHtml(ev.title)}</div>
-                ${ev.location ? `<div class="meet-loc">${escapeHtml(ev.location)}</div>` : ''}
-              </div>
-            </div>`;
-        }).join('')}
-      </div>
-    </div>
-  `;
+      </div>`;
+  }).join('') : `<p class="side-empty">No meetings today.</p>`;
+  return sideSection('meetings', "Today's meetings", meets.length ? (remaining ? `${remaining} left` : 'All done') : '', refresh, body);
 }
 
 function taskSearchResults(){
@@ -1681,8 +1728,26 @@ function goalPanel(){
   `;
 }
 
-// Anything due today, anything overdue that was never finished (carry-forward),
-// and anything parked waiting on someone else.
+// ---------- sidebar sections ----------
+// Each section folds open/closed; the choice is remembered in this browser.
+// On narrow screens they start folded so the work queues come first.
+let sideCollapsed = {};
+try { sideCollapsed = JSON.parse(localStorage.getItem('side-collapsed') || '{}') || {}; } catch(e){}
+function sideIsClosed(id){ return id in sideCollapsed ? !!sideCollapsed[id] : window.innerWidth <= 900; }
+function sideSection(id, title, meta, actions, body){
+  const closed = sideIsClosed(id);
+  return `
+    <section class="side-sec">
+      <div class="side-sec-head">
+        <button data-side-toggle="${id}" class="side-sec-title" aria-expanded="${!closed}" title="${closed ? 'Show' : 'Hide'} ${escapeAttr(title)}">
+          ${icon(closed ? 'chevronRight' : 'chevronDown', 12)}<span>${title}</span>${meta ? `<span class="side-sec-meta">${meta}</span>` : ''}
+        </button>
+        ${actions || ''}
+      </div>
+      ${closed ? '' : `<div class="side-sec-body">${body}</div>`}
+    </section>`;
+}
+
 // Daily tasks: the same checklist every day (or every weekday), unticked each morning.
 let dailyEditing = false;
 function dailyTasksToday(){
@@ -1694,32 +1759,25 @@ function dailyTasksPanel(){
   const done = new Set((state.dailyDone || {})[todayKey()] || []);
   const left = list.filter(t => !done.has(t.id)).length;
   const all = state.dailyTasks || [];
-  return `
-    <div class="card" style="margin-bottom:14px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <label class="section" style="margin:0;">Daily tasks${list.length ? ` · ${list.length - left}/${list.length}` : ''}</label>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${list.length ? (left ? `<span class="subtle" style="font-size:12.5px;">${left} left</span>` : `<span class="subtle" style="font-size:12.5px; color:#1E7B3A;">All done</span>`) : ''}
-          ${all.length ? `<button data-daily-edit class="icon-btn" title="${dailyEditing ? 'Done editing' : 'Edit daily tasks'}" style="width:24px;height:24px;">${icon(dailyEditing ? 'close' : 'pencil', 11)}</button>` : ''}
-        </div>
-      </div>
-      <div style="margin-top:10px;">
-        ${dailyEditing ? all.map(t => `
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-            <span style="flex:1; min-width:0; font-size:13.5px;">${escapeHtml(t.text)}</span>
-            <label class="subtle" style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;"><input type="checkbox" data-daily-weekdays="${t.id}" ${t.weekdays ? 'checked' : ''} style="width:auto;" /> Weekdays only</label>
-            <button data-daily-del="${t.id}" class="icon-btn" title="Delete" style="width:24px;height:24px;">${icon('trash', 11)}</button>
-          </div>`).join('')
-        : list.map(t => `
-          <label style="display:flex; align-items:center; gap:8px; margin-bottom:6px; cursor:pointer; font-size:13.5px;">
-            <input type="checkbox" data-daily-done="${t.id}" ${done.has(t.id) ? 'checked' : ''} style="width:auto;" />
-            <span style="${done.has(t.id) ? 'text-decoration:line-through; color:var(--muted);' : ''}">${escapeHtml(t.text)}</span>
-          </label>`).join('')}
-        ${!all.length ? `<p class="subtle" style="margin:0 0 8px; font-size:12.5px;">Things you do every day. They untick themselves each morning.</p>` : ''}
-        <input data-daily-add placeholder="+ Add a daily task" style="font-size:13px; padding:6px 8px; margin-top:4px;" />
-      </div>
-    </div>
-  `;
+  const meta = list.length ? (left ? `${list.length - left}/${list.length}` : 'All done') : '';
+  const actions = all.length ? `<button data-daily-edit class="icon-btn side-act" title="${dailyEditing ? 'Done editing' : 'Edit, reorder or remove daily tasks'}">${icon(dailyEditing ? 'close' : 'pencil', 11)}</button>` : '';
+  const body = `
+    ${dailyEditing ? all.map((t, i) => `
+      <div class="daily-edit-row">
+        <input data-daily-rename="${t.id}" value="${escapeAttr(t.text)}" aria-label="Rename ${escapeAttr(t.text)}" />
+        <button data-daily-move="${t.id}" data-dir="-1" class="icon-btn side-act" title="Move up" ${i === 0 ? 'disabled' : ''}>${icon('chevronUp', 10)}</button>
+        <button data-daily-move="${t.id}" data-dir="1" class="icon-btn side-act" title="Move down" ${i === all.length - 1 ? 'disabled' : ''}>${icon('chevronDown', 10)}</button>
+        <label class="daily-wd" title="Only on weekdays"><input type="checkbox" data-daily-weekdays="${t.id}" ${t.weekdays ? 'checked' : ''} /> M–F</label>
+        <button data-daily-del="${t.id}" class="icon-btn danger side-act" title="Remove">${icon('trash', 10)}</button>
+      </div>`).join('')
+    : list.map(t => `
+      <label class="daily-row${done.has(t.id) ? ' is-done' : ''}">
+        <input type="checkbox" data-daily-done="${t.id}" ${done.has(t.id) ? 'checked' : ''} />
+        <span>${escapeHtml(t.text)}</span>
+      </label>`).join('')}
+    ${!all.length ? `<p class="side-empty">Things you do every day. They untick themselves each morning.</p>` : ''}
+    <input data-daily-add class="side-add" placeholder="+ Add a daily task" />`;
+  return sideSection('daily', 'Daily tasks', meta, actions, body);
 }
 
 // Reminders pop up while the site is open in a tab: on the page, and as a
@@ -1786,6 +1844,7 @@ function reminderPopupHtml(){
     </div>
   </div>`;
 }
+let reminderEditId = null;
 function remindersPanel(){
   const list = state.reminders || [];
   const notif = window.Notification ? Notification.permission : 'unsupported';
@@ -1793,62 +1852,71 @@ function remindersPanel(){
   // "7:30a", "2p": fits on one line next to the reminder.
   const shortTime = t => { const [h, m] = String(t).split(':').map(Number); return ((h % 12) || 12) + (m ? ':' + String(m).padStart(2, '0') : '') + (h < 12 ? 'a' : 'p'); };
   const everyLabel = n => n % 60 === 0 ? (n === 60 ? 'Every hour' : 'Every ' + n / 60 + ' hours') : 'Every ' + n + ' min';
-  return `
-    <div class="card" style="margin-bottom:14px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <label class="section" style="margin:0;">Reminders</label>
-        <button data-reminder-new class="icon-btn" title="Add a reminder" style="width:24px;height:24px;">${icon(reminderAdding ? 'close' : 'plus', 11)}</button>
-      </div>
-      <div style="margin-top:10px;">
-        ${list.map(r => `
-          <div class="rem-row" style="${r.on ? '' : 'opacity:.55;'}">
-            <input type="checkbox" data-reminder-on="${r.id}" ${r.on ? 'checked' : ''} title="${r.on ? 'On — click to pause' : 'Paused — click to turn on'}" style="width:auto;" />
-            <span class="rem-text" title="${escapeAttr(everyLabel(Number(r.every) || 60) + ', ' + fmt(r.from) + '–' + fmt(r.to) + (r.weekdays ? ', weekdays' : ''))}">${escapeHtml(r.text)}</span>
-            <span class="rem-when">${everyLabel(Number(r.every) || 60).replace('Every hour', 'hourly').replace('Every ', '')} · ${shortTime(r.from)}–${shortTime(r.to)}</span>
-            <button data-reminder-del="${r.id}" class="icon-btn rem-del" title="Delete" style="width:22px;height:22px;">${icon('trash', 10)}</button>
-          </div>`).join('')}
-        ${reminderAdding || !list.length ? `
-          <div style="display:grid; gap:6px;">
-            <input id="rem-text" placeholder="Reminder, e.g. Check AMs" style="font-size:13px; padding:6px 8px;" />
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:12.5px;">
-              <select id="rem-every" style="width:auto; font-size:12.5px; padding:5px 6px;">
-                ${[[15,'Every 15 min'],[30,'Every 30 min'],[60,'Every hour'],[120,'Every 2 hours'],[240,'Every 4 hours']].map(([v, l]) => `<option value="${v}" ${v === 60 ? 'selected' : ''}>${l}</option>`).join('')}
-              </select>
-              <span class="subtle">from</span><input id="rem-from" type="time" value="07:30" style="width:auto; font-size:12.5px; padding:4px 6px;" />
-              <span class="subtle">to</span><input id="rem-to" type="time" value="14:00" style="width:auto; font-size:12.5px; padding:4px 6px;" />
-            </div>
-            <label class="subtle" style="font-size:12.5px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="rem-weekdays" checked style="width:auto;" /> Weekdays only</label>
-            <button data-reminder-save class="btn btn-primary" style="padding:6px 12px; font-size:13px; justify-self:start;">Add reminder</button>
-          </div>` : ''}
-        ${list.length && (reminderAdding || notif === 'default') ? `<p class="hint" style="margin:6px 0 0;">${reminderAdding ? 'Covers the screen until you click Done, while this site is open in a tab. ' : ''}${notif === 'default' ? `<button data-reminder-notify class="link-btn">Turn on desktop pop-ups</button> to see them in other windows too.` : ''}</p>` : ''}
-      </div>
-    </div>
-  `;
+  const editing = reminderEditId ? list.find(r => r.id === reminderEditId) : null;
+  const formOpen = reminderAdding || editing || !list.length;
+  const f = editing || { text: '', every: 60, from: '07:30', to: '14:00', weekdays: true };
+  const active = list.filter(r => r.on).length;
+  const actions = `<button data-reminder-new class="icon-btn side-act" title="${formOpen && list.length ? 'Close' : 'Add a reminder'}">${icon(formOpen && list.length ? 'close' : 'plus', 11)}</button>`;
+  const body = `
+    ${list.map(r => `
+      <div class="rem-row${r.on ? '' : ' is-off'}">
+        <input type="checkbox" data-reminder-on="${r.id}" ${r.on ? 'checked' : ''} title="${r.on ? 'On — click to pause' : 'Paused — click to turn on'}" />
+        <button data-reminder-edit="${r.id}" class="rem-main" title="Edit this reminder">
+          <span class="rem-text">${escapeHtml(r.text)}</span>
+          <span class="rem-when">${everyLabel(Number(r.every) || 60)} · ${fmt(r.from)}–${fmt(r.to)}${r.weekdays ? ' · weekdays' : ''}</span>
+        </button>
+        <button data-reminder-del="${r.id}" class="icon-btn danger side-act rem-del" title="Delete">${icon('trash', 10)}</button>
+      </div>`).join('')}
+    ${formOpen ? `
+      <div class="rem-form">
+        <input id="rem-text" placeholder="Reminder, e.g. Check AMs" value="${escapeAttr(f.text)}" />
+        <div class="rem-form-row">
+          <select id="rem-every">
+            ${[[15,'Every 15 min'],[30,'Every 30 min'],[60,'Every hour'],[120,'Every 2 hours'],[240,'Every 4 hours']].map(([v, l]) => `<option value="${v}" ${v === (Number(f.every) || 60) ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <input id="rem-from" type="time" value="${escapeAttr(f.from)}" title="From" />
+          <span class="subtle">to</span>
+          <input id="rem-to" type="time" value="${escapeAttr(f.to)}" title="To" />
+        </div>
+        <label class="daily-wd"><input type="checkbox" id="rem-weekdays" ${f.weekdays ? 'checked' : ''} /> Weekdays only</label>
+        <div class="rem-form-row">
+          <button data-reminder-save class="btn btn-primary btn-sm">${editing ? 'Save changes' : 'Add reminder'}</button>
+          ${editing ? `<button data-reminder-cancel class="btn btn-ghost btn-sm">Cancel</button>` : ''}
+        </div>
+        <p class="side-empty">Covers the screen until you click Done, while this site is open in a tab.</p>
+      </div>` : ''}
+    ${list.length && notif === 'default' ? `<p class="side-empty"><button data-reminder-notify class="link-btn">Turn on desktop pop-ups</button> to see them in other windows too.</p>` : ''}`;
+  return sideSection('reminders', 'Reminders', list.length ? `${active} on` : '', actions, body);
 }
 
+function taskCardNames(t){
+  const names = taskCategoryIds(t).map(id => (state.categories.find(c => c.id === id) || {}).label).filter(Boolean);
+  return names.length ? names.join(', ') : 'General';
+}
+function daysBetween(a, b){ return Math.round((toMsDay(b) - toMsDay(a)) / 86400000); }
+function dueText(t){
+  if (!t.dueDate) return '';
+  const d = daysBetween(t.dueDate, todayKey());
+  if (d > 0) return d === 1 ? '1 day overdue' : d + ' days overdue';
+  if (d === 0) return 'Due today';
+  return 'Due ' + dateFromKey(t.dueDate).toLocaleDateString(undefined, { month:'short', day:'numeric' });
+}
 function dueTodayPanel(){
-  // Tasks waiting on someone are already listed in the Waiting on banner.
-  const overdue = state.tasks.filter(t => isOverdue(t) && !t.waitingOn);
+  // Tasks waiting on someone are listed under Waiting on instead.
+  const overdue = state.tasks.filter(t => isOverdue(t) && !t.waitingOn).sort((a, b) => a.dueDate < b.dueDate ? -1 : 1);
   const today = state.tasks.filter(t => isDueToday(t) && !t.waitingOn);
-  const nothing = !overdue.length && !today.length;
-
-  const block = (title, list, cls) => list.length ? `
-    <div style="margin-bottom:10px;">
-      <p class="hint" style="margin:0 0 5px; font-weight:700; ${cls||''}">${title} · ${list.length}</p>
-      <div class="dcard-tasks" style="margin:0;">${list.map(t => cardTaskRow(t, null)).join('')}</div>
-    </div>` : '';
-
-  return `
-    <div class="card" style="margin-bottom:14px;">
-      <label class="section">Needs attention</label>
-      <div style="margin-top:10px;">
-        ${nothing
-          ? `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing overdue or due today${state.tasks.some(t => (isOverdue(t) || isDueToday(t)) && t.waitingOn) ? ' (besides what is under Waiting on)' : ''}.</p>`
-          : `${block('Overdue', overdue, 'color:#D0453A;')}
-             ${block('Due today', today, '')}`}
-      </div>
-    </div>
-  `;
+  const waitingLate = state.tasks.filter(t => (isOverdue(t) || isDueToday(t)) && t.waitingOn).length;
+  const row = t => `
+    <button data-goto-task="${t.id}" class="att-row" title="Show this task on the board">
+      <span class="att-text">${escapeHtml(t.text)}</span>
+      <span class="att-meta"><span>${escapeHtml(taskCardNames(t))}</span><span class="status-badge ${isOverdue(t) ? 'is-overdue' : 'is-soon'}">${escapeHtml(dueText(t))}</span></span>
+    </button>`;
+  const body = `
+    ${overdue.map(row).join('')}${today.map(row).join('')}
+    ${!overdue.length && !today.length ? `<p class="side-empty">Nothing overdue or due today.</p>` : ''}
+    ${waitingLate ? `<button data-nav="waiting" class="side-link">${waitingLate} more under Waiting on</button>` : ''}`;
+  const n = overdue.length + today.length;
+  return sideSection('attention', 'Needs attention', n ? `<span class="${overdue.length ? 'meta-overdue' : ''}">${n}</span>` : '', '', body);
 }
 
 function taskEditorPanel(t){
@@ -1917,7 +1985,7 @@ function cardTaskRow(t, currentCatId, opts){
   // ticked the checkbox. Only the checkbox itself toggles now, and the text is a
   // real input you can type in, select, and copy out of.
   return `
-    <div class="card-task-row">
+    <div class="card-task-row" data-task-row="${t.id}">
       <input type="checkbox" data-task-toggle="${t.id}" ${t.done?'checked':''} title="${t.done?'Mark not done':'Mark done'}" />
       <div class="task-main">
         <textarea data-task-text="${t.id}" rows="1" class="task-text-input${t.done?' is-done':''}">${escapeHtml(t.text)}</textarea>
@@ -1941,7 +2009,7 @@ function dueBadge(t){
   return ` <span class="due-pill">${escapeHtml(dateFromKey(t.dueDate).toLocaleDateString(undefined,{month:'short',day:'numeric'}))}</span>`;
 }
 
-function generalCard(key, tone, due, foldable){
+function generalCard(key, tone, due){
   const tasks = state.tasks.filter(t => taskCategoryIds(t).length === 0);
   // The card shows what's still live plus anything checked off today, so ticking
   // something doesn't make it vanish out from under you. Older finished tasks
@@ -1953,7 +2021,6 @@ function generalCard(key, tone, due, foldable){
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       <div class="dcard-head">
         <button data-open-card="__general" class="dcard-title dcard-title-btn" title="Open this card">General</button>
-        ${foldable ? `<button data-quiet-fold="__general" class="icon-btn" title="Fold back into the row below" style="width:26px;height:26px;">${icon('chevronUp',13)}</button>` : ''}
       </div>
       <div class="stat-big"><span class="num">${openCount}</span><span class="lbl">open</span></div>
       <p class="hint" style="margin:2px 0 10px;">Tasks not tied to a category</p>
@@ -1966,7 +2033,7 @@ function generalCard(key, tone, due, foldable){
   `;
 }
 
-function categoryCard(c, key, tone, due, foldable){
+function categoryCard(c, key, tone, due){
   ensureCategoryDefaults(c);
   const rec = (state.dailyCounts[key] && state.dailyCounts[key][c.id]) || { assigned:0, completed:0 };
   const remaining = Math.max(0, rec.assigned - rec.completed);
@@ -1986,7 +2053,6 @@ function categoryCard(c, key, tone, due, foldable){
       <div class="dcard-head">
         <button data-open-card="${c.id}" class="dcard-title dcard-title-btn" title="Open this card">${escapeHtml(c.label)}</button>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
-        ${foldable ? `<button data-quiet-fold="${c.id}" class="icon-btn" title="Fold back into the row below" style="width:26px;height:26px;">${icon('chevronUp',13)}</button>` : ''}
         <button data-pin-toggle="${c.id}" class="icon-btn" title="Change pinned stat" style="width:26px;height:26px;">${icon('pin',13)}</button>
         <div class="pin-menu${openPinMenu === c.id ? ' open' : ''}" data-pin-menu="${c.id}">
           ${PIN_OPTIONS.map(o => `<button data-pin-choose="${c.id}" data-choose-val="${o.val}">${o.label}</button>`).join('')}
@@ -4938,8 +5004,29 @@ function attachHandlers(){
     saveState(); render();
   });
 
-  document.querySelectorAll('[data-quiet-open]').forEach(el => el.onclick = () => { quietOpen.add(el.getAttribute('data-quiet-open')); render(); });
-  document.querySelectorAll('[data-quiet-fold]').forEach(el => el.onclick = (e) => { e.stopPropagation(); quietOpen.delete(el.getAttribute('data-quiet-fold')); render(); });
+  document.querySelectorAll('[data-side-toggle]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-side-toggle');
+    sideCollapsed[id] = !sideIsClosed(id);
+    try { localStorage.setItem('side-collapsed', JSON.stringify(sideCollapsed)); } catch(e){}
+    render();
+  });
+  document.querySelectorAll('[data-goto-task]').forEach(el => el.onclick = () => focusTask(el.getAttribute('data-goto-task')));
+  document.querySelectorAll('[data-daily-rename]').forEach(el => el.onchange = () => {
+    const t = (state.dailyTasks || []).find(x => x.id === el.getAttribute('data-daily-rename'));
+    const text = el.value.trim();
+    if (!t || !text || text === t.text) { if (t) el.value = t.text; return; }
+    t.text = text; saveState();
+  });
+  document.querySelectorAll('[data-daily-move]').forEach(el => el.onclick = () => {
+    const list = state.dailyTasks || [];
+    const i = list.findIndex(x => x.id === el.getAttribute('data-daily-move')), j = i + Number(el.getAttribute('data-dir'));
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    saveState(); render();
+  });
+  document.querySelectorAll('[data-reminder-edit]').forEach(el => el.onclick = () => { reminderEditId = el.getAttribute('data-reminder-edit'); reminderAdding = false; render(); });
+  const remCancel = document.querySelector('[data-reminder-cancel]');
+  if (remCancel) remCancel.onclick = () => { reminderEditId = null; render(); };
   document.querySelectorAll('[data-task-group]').forEach(el => el.onclick = () => {
     const k = el.getAttribute('data-task-group');
     if (taskGroupOpen.has(k)) taskGroupOpen.delete(k); else taskGroupOpen.add(k);
@@ -4947,16 +5034,23 @@ function attachHandlers(){
   });
 
   const remNew = document.querySelector('[data-reminder-new]');
-  if (remNew) remNew.onclick = () => { reminderAdding = !reminderAdding; render(); };
+  if (remNew) remNew.onclick = () => {
+    if (reminderEditId) { reminderEditId = null; reminderAdding = false; }
+    else reminderAdding = !reminderAdding;
+    render();
+  };
   const remSave = document.querySelector('[data-reminder-save]');
   if (remSave) remSave.onclick = () => {
     const text = document.getElementById('rem-text').value.trim();
     if (!text) { showToast('Type what to be reminded of'); return; }
     const from = document.getElementById('rem-from').value || '08:00', to = document.getElementById('rem-to').value || '17:00';
-    state.reminders = [...(state.reminders || []), { id: uid('rem'), text, every: Number(document.getElementById('rem-every').value) || 60, from, to, weekdays: document.getElementById('rem-weekdays').checked, on: true }];
-    reminderAdding = false;
+    const fields = { text, every: Number(document.getElementById('rem-every').value) || 60, from, to, weekdays: document.getElementById('rem-weekdays').checked };
+    const editing = reminderEditId && (state.reminders || []).find(r => r.id === reminderEditId);
+    if (editing) Object.assign(editing, fields);
+    else state.reminders = [...(state.reminders || []), Object.assign({ id: uid('rem'), on: true }, fields)];
+    reminderAdding = false; reminderEditId = null;
     saveState(); render(); checkReminders();
-    showToast('Reminder added');
+    showToast(editing ? 'Reminder saved' : 'Reminder added');
   };
   document.querySelectorAll('[data-reminder-on]').forEach(el => el.onchange = () => {
     const r = (state.reminders || []).find(x => x.id === el.getAttribute('data-reminder-on'));
