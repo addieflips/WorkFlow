@@ -403,6 +403,11 @@
   .build-stamp{ color:#B3B0AA; margin-top:auto; }
   .side-panels{ border-top:1px solid var(--border); margin-top:8px; }
   .nav-primary{ display:flex; flex-direction:column; gap:1px; }
+  .boot-loading{ display:flex; align-items:center; justify-content:center; min-height:100vh; font-size:14px; color:var(--muted); }
+  .toast{ display:flex; align-items:center; gap:12px; }
+  .toast-undo{ background:none; border:1px solid rgba(255,255,255,.35); border-radius:6px; color:#fff; font-family:inherit; font-size:12.5px; font-weight:600; padding:3px 10px; cursor:pointer; }
+  .toast-undo:hover{ background:rgba(255,255,255,.12); }
+  .toast-undo:focus-visible{ outline:2px solid #fff; outline-offset:2px; }
   .metric.on{ border-color:var(--ink); box-shadow:0 0 0 1px var(--ink); }
   .ws-add.on{ background:var(--primary-soft); border-color:#C9CEDA; }
   .results{ padding:12px 16px; }
@@ -662,7 +667,7 @@
 </head>
 <body>
 
-<div id="root"></div>
+<div id="root"><div class="boot-loading" role="status">Loading your workspace…</div></div>
 
 <script>
 const STORAGE_KEY = 'dispatch-state-v2';
@@ -1015,7 +1020,14 @@ document.addEventListener('visibilitychange', async () => {
     render();
   } catch(e){}
 });
-function showToast(msg){ toast = msg; render(); setTimeout(()=>{ toast=''; render(); }, 1800); }
+// A toast can carry an Undo. Each new toast replaces the last, and its own
+// timer only clears itself, so an older timer can't hide a newer message.
+let toastUndo = null, toastSeq = 0;
+function showToast(msg, undo){
+  const id = ++toastSeq;
+  toast = msg; toastUndo = undo || null; render();
+  setTimeout(() => { if (toastSeq === id) { toast = ''; toastUndo = null; render(); } }, undo ? 6000 : 1800);
+}
 
 function nameToken(label){ return `{{${label} Name}}`; }
 function emailToken(label){ return `{{${label} Email}}`; }
@@ -1128,7 +1140,7 @@ function render(){
       ${sidebarHtml()}
       <main class="main"><div class="main-inner${['home','today','waiting'].includes(view) ? ' wide' : ''}">${mainBody()}</div></main>
     </div>
-    ${toast ? `<div class="toast">${toast}</div>` : ''}
+    ${toast ? `<div class="toast" role="status">${toast}${toastUndo ? ` <button data-toast-undo class="toast-undo">Undo</button>` : ''}</div>` : ''}
     ${quickAddHtml()}
     ${reminderPopupHtml()}
     ${saveProblem ? `<div class="save-problem">${escapeHtml(saveProblem)} <button data-save-retry class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Try again</button></div>` : ''}
@@ -1140,6 +1152,8 @@ function render(){
     render();
     if (p) setTimeout(() => { reminderPopups.push(p); render(); }, 10 * 60 * 1000);
   });
+  const undoBtn = document.querySelector('[data-toast-undo]');
+  if (undoBtn) undoBtn.onclick = () => { const fn = toastUndo; toast = ''; toastUndo = null; toastSeq++; if (fn) fn(); };
   document.querySelectorAll('[data-qa-open]').forEach(el => el.onclick = (e) => { e.stopPropagation(); openQuickAdd(el.getAttribute('data-qa-open')); });
   document.querySelectorAll('[data-qa-close]').forEach(el => el.onclick = () => { quickAdd = null; render(); });
   const qaBack = document.querySelector('[data-qa-backdrop]');
@@ -5532,8 +5546,13 @@ function attachHandlers(){
   });
   document.querySelectorAll('[data-reminder-del]').forEach(el => el.onclick = () => {
     const id = el.getAttribute('data-reminder-del');
-    state.reminders = (state.reminders || []).filter(x => x.id !== id);
+    const list = state.reminders || [];
+    const i = list.findIndex(x => x.id === id);
+    if (i < 0) return;
+    const [gone] = list.splice(i, 1);
+    if (reminderEditId === id) reminderEditId = null;
     saveState(); render();
+    showToast('Reminder deleted', () => { state.reminders.splice(Math.min(i, state.reminders.length), 0, gone); saveState(); render(); });
   });
   const remNotify = document.querySelector('[data-reminder-notify]');
   if (remNotify) remNotify.onclick = () => { try { Notification.requestPermission().then(() => render()); } catch(e){} };
@@ -5566,9 +5585,13 @@ function attachHandlers(){
   });
   document.querySelectorAll('[data-daily-del]').forEach(el => el.onclick = () => {
     const id = el.getAttribute('data-daily-del');
-    state.dailyTasks = (state.dailyTasks || []).filter(x => x.id !== id);
-    if (!state.dailyTasks.length) dailyEditing = false;
+    const list = state.dailyTasks || [];
+    const i = list.findIndex(x => x.id === id);
+    if (i < 0) return;
+    const [gone] = list.splice(i, 1);
+    if (!list.length) dailyEditing = false;
     saveState(); render();
+    showToast('Daily task removed', () => { state.dailyTasks.splice(Math.min(i, state.dailyTasks.length), 0, gone); saveState(); render(); });
   });
 
   document.querySelectorAll('[data-open-card]').forEach(el => el.onclick = (e) => {
@@ -6058,12 +6081,15 @@ function attachHandlers(){
     const id = el.getAttribute('data-task-toggle');
     const t = state.tasks.find(x=>x.id===id);
     if (!t) return;
+    const prev = { done: t.done, completedDate: t.completedDate };
     t.done = el.checked;
     t.completedDate = el.checked ? todayKey() : null;
     saveState(); render();
     // Finished tasks leave the card front immediately, so say what happened —
     // otherwise ticking one just looks like the row vanished.
-    if (el.checked) showToast('Done \u00b7 filed behind the card');
+    const undo = () => { t.done = prev.done; t.completedDate = prev.completedDate; saveState(); render(); };
+    if (el.checked) showToast('Done \u00b7 filed behind the card', undo);
+    else showToast('Reopened', undo);
   });
 
   // A note is a textarea so it wraps, but it shouldn't scroll or leave dead
@@ -6220,8 +6246,16 @@ function attachHandlers(){
 
   document.querySelectorAll('[data-task-delete]').forEach(el => el.onclick = () => {
     const id = el.getAttribute('data-task-delete');
-    state.tasks = state.tasks.filter(t=>t.id!==id);
+    const i = state.tasks.findIndex(t => t.id === id);
+    if (i < 0) return;
+    const [gone] = state.tasks.splice(i, 1);
+    if (editingTaskId === id) editingTaskId = null;
     saveState(); render();
+    showToast('Task deleted', () => {
+      if (state.tasks.some(t => t.id === gone.id)) return;
+      state.tasks.splice(Math.min(i, state.tasks.length), 0, gone);
+      saveState(); render();
+    });
   });
 
   // These used to save on `change` only, which fires on blur. A number typed in
