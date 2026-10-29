@@ -402,6 +402,22 @@
   .nav-bottom{ margin-top:6px; border-top:1px solid var(--border); padding-top:6px; }
   .build-stamp{ color:#B3B0AA; margin-top:auto; }
   .side-panels{ border-top:1px solid var(--border); margin-top:8px; }
+  .nav-primary{ display:flex; flex-direction:column; gap:1px; }
+  .nav-divider{ height:1px; background:var(--border); margin:6px 4px; }
+  .wait-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .wait-banner{ padding:12px 16px; }
+  .wait-list{ display:flex; flex-direction:column; margin-top:6px; }
+  .wait-row{ display:flex; align-items:center; gap:10px; padding:6px 4px; border-top:1px solid #F1EEEA; font-size:13px; }
+  .wait-row:first-child{ border-top:none; }
+  .wait-row > input[type=checkbox]{ width:15px; height:15px; flex-shrink:0; }
+  .wait-main{ flex:1; min-width:0; }
+  .wait-title{ display:block; max-width:100%; background:none; border:none; padding:0; font-family:inherit; font-size:13.5px; color:var(--ink); text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wait-title:hover{ color:var(--soon); text-decoration:underline; }
+  .wait-meta{ display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11.5px; color:var(--muted); margin-top:1px; }
+  .wait-who{ font-weight:600; color:#5F5D59; }
+  .wait-date{ width:auto !important; font-size:12px !important; padding:4px 6px !important; }
+  .btn-xs{ padding:3px 9px; font-size:11.5px; border-radius:7px; white-space:nowrap; }
+  @media (max-width: 700px){ .wait-row{ flex-wrap:wrap; } .wait-main{ flex-basis:calc(100% - 30px); } }
   .sidebar input[type=checkbox]{ width:auto; flex-shrink:0; margin:0; }
   .side-sec{ border-bottom:1px solid var(--border); padding:8px 2px; }
   .side-sec-head{ display:flex; align-items:center; gap:6px; }
@@ -1151,8 +1167,13 @@ function attachLockHandlers(){
 }
 
 // Everything lives under More. Pin what you use to bring it to the top.
+// The three main views always sit at the top of the sidebar.
+const PRIMARY_NAV = [
+  { key:'home',    label:'Task board', ic:'list'  },
+  { key:'waiting', label:'Waiting on', ic:'users' },
+];
 const NAV_ITEMS = [
-  { key:'home',      label:'Home',         ic:'home'     },
+  { key:'home',      label:'Task board',   ic:'list'     },
   { key:'templates', label:'Templates',    ic:'mail'     },
   { key:'triage',    label:'Triage email', ic:'inbox'    },
   { key:'assistant', label:'Assistant',    ic:'sparkle'  },
@@ -1177,7 +1198,7 @@ function isPinned(key){ return (state.pinnedNav||[]).includes(key); }
 
 function navIsActive(key){
   if (key === 'templates') return ['templates','editor','generate','combineResult'].includes(view);
-  if (key === 'home') return view === 'home' || view === 'categories';
+  if (key === 'home') return view === 'home' || view === 'categories' || view === 'card';
   return view === key;
 }
 
@@ -1185,12 +1206,13 @@ function navRow(item, opts){
   const sub = opts && opts.sub;
   const count = navCount(item.key);
   const overdue = item.key === 'home' ? state.tasks.filter(isOverdue).length : 0;
+  const waitCount = item.key === 'waiting' ? state.tasks.filter(t => !t.done && t.waitingOn).length : 0;
   const attr = item.key === 'templates' ? `data-select-folder=""` : `data-nav="${item.key}"`;
   return `
     <div class="nav-row${sub?' nav-row-sub':''}">
       <div ${attr} class="nav-item${sub?' nav-item-sub':''} ${navIsActive(item.key)?'active':''}" style="flex:1;">
         ${icon(item.ic, sub?13:15)}<span class="lbl">${item.label}</span>
-        ${overdue ? `<span class="nav-badge">${overdue}</span>` : (count ? `<span class="count">${count}</span>` : '')}
+        ${overdue ? `<span class="nav-badge">${overdue}</span>` : (count || waitCount ? `<span class="count">${count || waitCount}</span>` : '')}
       </div>
       ${sub ? `<button data-pin-nav="${item.key}" class="nav-pin${isPinned(item.key)?' on':''}" title="${isPinned(item.key)?'Unpin':'Pin to top'}">${icon('pin',12)}</button>` : ''}
     </div>`;
@@ -1198,13 +1220,15 @@ function navRow(item, opts){
 
 function sidebarHtml(){
   const onTemplates = ['templates','editor','generate','combineResult'].includes(view);
-  const pinned = NAV_ITEMS.filter(i => isPinned(i.key));
+  const pinned = NAV_ITEMS.filter(i => isPinned(i.key) && i.key !== 'home');
   const moreOpen = showMoreNav || (!pinned.length);
 
   return `
     <aside class="sidebar">
       <div class="logo-row"><div class="logo-mark">${icon('sparkle',15)}</div><div class="logo-text">Dispatch</div></div>
 
+      <nav class="nav-primary">${PRIMARY_NAV.map(i => navRow(i)).join('')}</nav>
+      ${pinned.length ? '<div class="nav-divider"></div>' : ''}
       ${pinned.map(i => `
         ${navRow(i)}
         ${i.key==='templates' && onTemplates ? `
@@ -1221,7 +1245,7 @@ function sidebarHtml(){
         <div data-toggle-more class="nav-item nav-more">${icon(moreOpen?'chevronDown':'chevronRight',13)}<span class="lbl">More</span></div>
         ${moreOpen ? `
           <div class="nav-sub" style="margin-top:2px;">
-            ${NAV_ITEMS.map(i => navRow(i, { sub:true })).join('')}
+            ${NAV_ITEMS.filter(i => i.key !== 'home').map(i => navRow(i, { sub:true })).join('')}
             <p class="hint" style="margin:6px 0 2px 8px;">Tap a pin to keep it at the top.</p>
           </div>` : ''}
       </div>
@@ -1244,6 +1268,7 @@ function mainBody(){
     setTimeout(() => loadOutlook(), 0);
   }
   if (view === 'home') return viewHome();
+  if (view === 'waiting') return viewWaiting();
   if (view === 'card') return viewCardDetail();
   if (view === 'tools') return viewTools();
   if (view === 'triage') return viewTriage();
@@ -1368,38 +1393,91 @@ function carryForwardCounts(key){
   saveState();
 }
 
+// A waiting task's due date is its follow-up date. "Days waiting" counts from
+// when the task was created (unchanged). Recording a follow-up keeps the task
+// open: it logs today in followUps and moves the follow-up date on.
+function waitingTasks(){
+  return state.tasks.filter(t => !t.done && t.waitingOn);
+}
+function waitDays(t){ return t.createdDate ? daysBetween(t.createdDate, todayKey()) : null; }
+function waitStatus(t){
+  if (!t.dueDate) return { cls: '', label: 'No follow-up date' };
+  const d = daysBetween(todayKey(), t.dueDate);
+  if (d < 0) return { cls: 'is-overdue', label: 'Follow-up ' + (-d === 1 ? '1 day' : -d + ' days') + ' late' };
+  if (d === 0) return { cls: 'is-soon', label: 'Follow up today' };
+  return { cls: '', label: 'Follow up ' + dateFromKey(t.dueDate).toLocaleDateString(undefined, { month:'short', day:'numeric' }) };
+}
+// Late follow-ups first, then the longest waiting.
+function sortWaiting(list){
+  return list.slice().sort((a, b) => (a.dueDate || '9999') < (b.dueDate || '9999') ? -1 : (a.dueDate || '9999') > (b.dueDate || '9999') ? 1 : (waitDays(b) || 0) - (waitDays(a) || 0));
+}
+function lastFollowUp(t){ return (t.followUps || []).slice(-1)[0] || null; }
+function addBusinessDays(key, n){
+  const d = dateFromKey(key);
+  while (n > 0) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) n--; }
+  return keyFromDate(d);
+}
+function waitingRow(t, full){
+  const d = waitDays(t), st = waitStatus(t), last = lastFollowUp(t);
+  return `
+    <div class="wait-row${full ? ' wait-row-full' : ''}">
+      <input type="checkbox" data-task-toggle="${t.id}" title="Mark done — no longer waiting" />
+      <div class="wait-main">
+        <button data-goto-task="${t.id}" class="wait-title" title="Show on the board">${escapeHtml(t.text)}</button>
+        <div class="wait-meta">
+          <span class="wait-who">${escapeHtml(t.waitingOn)}</span>
+          <span>${escapeHtml(taskCardNames(t))}</span>
+          ${last ? `<span>Followed up ${escapeHtml(dateFromKey(last).toLocaleDateString(undefined, { month:'short', day:'numeric' }))}${(t.followUps || []).length > 1 ? ' (' + t.followUps.length + '×)' : ''}</span>` : ''}
+        </div>
+      </div>
+      ${d !== null ? `<span class="wait-age${d >= 10 ? ' wait-age-old' : ''}" title="Waiting ${d} day${d === 1 ? '' : 's'} (since ${escapeAttr(t.createdDate)})">${d}d</span>` : ''}
+      ${full
+        ? `<input type="date" data-task-due="${t.id}" value="${escapeAttr(t.dueDate || '')}" class="wait-date" title="Follow-up date" />`
+        : ''}
+      <span class="status-badge ${st.cls}">${escapeHtml(st.label)}</span>
+      <button data-wait-followup="${t.id}" class="btn btn-ghost btn-xs" title="Log a follow-up today and move the follow-up date 3 working days on. The task stays open.">Followed up</button>
+    </div>`;
+}
+let waitingShowAll = false;
 function waitingBadges(){
-  const waiting = state.tasks.filter(t => !t.done && t.waitingOn);
+  const waiting = sortWaiting(waitingTasks());
   if (!waiting.length) return '';
-  const today = todayKey();
-  const age = t => t.createdDate ? Math.round((toMsDay(today) - toMsDay(t.createdDate)) / 86400000) : null;
-  const groups = {};
-  waiting.forEach(t => { (groups[t.waitingOn] = groups[t.waitingOn] || []).push(t); });
-
+  const max = 4, shown = waitingShowAll ? waiting : waiting.slice(0, max);
   return `
     <div class="card wait-banner">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <label class="section" style="margin:0;">Waiting on \u00b7 ${waiting.length}</label>
-        <button data-manage-waiting-home class="link-btn" title="Add, rename, reorder or delete the options in this list">${homeWaitingManageOpen ? 'Done' : 'Edit list'}</button>
+      <div class="wait-head">
+        <label class="section" style="margin:0;">Waiting on · ${waiting.length}</label>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <button data-manage-waiting-home class="link-btn" title="Add, rename, reorder or delete the options in this list">${homeWaitingManageOpen ? 'Done' : 'Edit list'}</button>
+          <button data-nav="waiting" class="link-btn">Open Waiting on</button>
+        </div>
       </div>
       ${homeWaitingManageOpen ? waitingInlineManager('home') : ''}
-      <div class="wait-banner-grid">
-        ${Object.keys(groups).sort().map(who => `
-          <div class="wait-banner-col">
-            <p class="hint" style="margin:0 0 5px; font-weight:700;">${escapeHtml(who)} \u00b7 ${groups[who].length}</p>
-            ${groups[who].map(t => {
-              const d = age(t);
-              const old = d !== null && d >= 10;
-              return `
-              <div class="wait-note">
-                <input type="checkbox" data-task-toggle="${t.id}" title="Mark done" />
-                <span class="wait-note-text" title="${escapeAttr(t.text)}">${escapeHtml(t.text)}</span>
-                ${d !== null ? `<span class="wait-age${old ? ' wait-age-old' : ''}">${d}d</span>` : ''}
-              </div>`;
-            }).join('')}
-          </div>`).join('')}
-      </div>
+      <div class="wait-list">${shown.map(t => waitingRow(t, false)).join('')}</div>
+      ${waiting.length > max ? `<button data-wait-more class="side-link" style="margin-top:4px;">${waitingShowAll ? 'Show fewer' : 'Show all ' + waiting.length}</button>` : ''}
     </div>`;
+}
+
+function viewWaiting(){
+  const waiting = sortWaiting(waitingTasks());
+  const groups = {};
+  waiting.forEach(t => { (groups[t.waitingOn] = groups[t.waitingOn] || []).push(t); });
+  const late = waiting.filter(t => t.dueDate && t.dueDate < todayKey()).length;
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Waiting on</div>
+        <div class="subtle">${waiting.length} open${late ? ` · <span style="color:var(--overdue);">${late} follow-up${late === 1 ? '' : 's'} late</span>` : ''} · days count from when the task was added</div>
+      </div>
+      <button data-manage-waiting-home class="btn btn-ghost btn-sm">${homeWaitingManageOpen ? 'Done editing list' : 'Edit people list'}</button>
+    </div>
+    ${homeWaitingManageOpen ? `<div class="card" style="margin-bottom:14px;">${waitingInlineManager('home')}</div>` : ''}
+    ${!waiting.length ? `<div class="card empty"><div class="empty-icon">${icon('users',20)}</div><div>Nothing is waiting on anyone. Set "Waiting on" in a task's details to track it here.</div></div>` : ''}
+    ${Object.keys(groups).sort().map(who => `
+      <div class="card" style="margin-bottom:14px;">
+        <label class="section">${escapeHtml(who)} · ${groups[who].length}</label>
+        <div class="wait-list">${groups[who].map(t => waitingRow(t, true)).join('')}</div>
+      </div>`).join('')}`;
 }
 
 function toMsDay(key){ const [y,m,d] = key.split('-').map(Number); return Date.UTC(y, m-1, d); }
@@ -5011,6 +5089,17 @@ function attachHandlers(){
     render();
   });
   document.querySelectorAll('[data-goto-task]').forEach(el => el.onclick = () => focusTask(el.getAttribute('data-goto-task')));
+  document.querySelectorAll('[data-wait-followup]').forEach(el => el.onclick = () => {
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-wait-followup'));
+    if (!t) return;
+    const today = todayKey();
+    t.followUps = [...(t.followUps || []), today];
+    t.dueDate = addBusinessDays(today, 3);
+    saveState(); render();
+    showToast('Follow-up logged · next follow-up ' + dateFromKey(t.dueDate).toLocaleDateString(undefined, { month:'short', day:'numeric' }));
+  });
+  const waitMore = document.querySelector('[data-wait-more]');
+  if (waitMore) waitMore.onclick = () => { waitingShowAll = !waitingShowAll; render(); };
   document.querySelectorAll('[data-daily-rename]').forEach(el => el.onchange = () => {
     const t = (state.dailyTasks || []).find(x => x.id === el.getAttribute('data-daily-rename'));
     const text = el.value.trim();
@@ -5884,6 +5973,7 @@ function attachHandlers(){
     if (!t) return;
     t.dueDate = el.value || null;
     saveState();
+    if (el.classList.contains('wait-date')) render();   // refresh the follow-up status beside it
   });
 
   document.querySelectorAll('[data-manage-waiting]').forEach(el => el.onclick = (e) => {
