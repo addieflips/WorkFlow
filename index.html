@@ -403,6 +403,25 @@
   .build-stamp{ color:#B3B0AA; margin-top:auto; }
   .side-panels{ border-top:1px solid var(--border); margin-top:8px; }
   .nav-primary{ display:flex; flex-direction:column; gap:1px; }
+  .count-edit{ gap:6px; margin-bottom:8px; }
+  .count-field{ display:flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:8px; padding:0 0 0 8px; background:#fff; }
+  .count-field:focus-within{ border-color:var(--soon); box-shadow:var(--focus); }
+  .count-field span{ font-size:11px; color:var(--muted); white-space:nowrap; }
+  .count-field input{ flex:1; width:100%; min-width:36px; border:none !important; box-shadow:none !important; padding:4px 8px 4px 2px !important; text-align:right; background:transparent; -moz-appearance:textfield; appearance:textfield; }
+  .count-field input::-webkit-inner-spin-button, .count-field input::-webkit-outer-spin-button{ -webkit-appearance:none; margin:0; }
+  .card-empty{ margin:0; font-size:12px; color:var(--muted); }
+  .card-task-row{ border-radius:6px; padding:1px 2px; }
+  .card-task-row:hover{ background:#FAF9F7; }
+  .prio-pill{ font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:999px; padding:1px 6px; background:var(--neutral-soft); color:var(--neutral); }
+  .prio-high{ background:var(--ink); color:#fff; }
+  .note-pill{ display:inline-flex; align-items:center; gap:3px; font-size:10.5px; font-weight:600; color:var(--neutral); }
+  .editor-card-name{ font-size:12.5px; padding:6px 2px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .done-block{ margin-top:2px; }
+  .done-list{ display:flex; flex-direction:column; gap:3px; margin:4px 0 6px; padding:6px 8px; background:var(--bg); border-radius:8px; }
+  .done-row{ display:flex; align-items:center; gap:7px; font-size:12px; }
+  .done-row input{ width:13px; height:13px; flex-shrink:0; margin:0; }
+  .done-text{ flex:1; min-width:0; color:var(--muted); text-decoration:line-through; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .done-when{ font-size:11px; color:var(--muted); flex-shrink:0; }
   .nav-divider{ height:1px; background:var(--border); margin:6px 4px; }
   .wait-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .wait-banner{ padding:12px 16px; }
@@ -1516,6 +1535,20 @@ function homeCardsArea(key){
     </div>`;
 }
 
+// Every new queue task goes through here (card inputs and Quick add), so the
+// record always has the same shape. cardId '__general' (or none) = General.
+function createTask(f){
+  const t = {
+    id: uid('task'), text: f.text, done: false, createdDate: todayKey(), completedDate: null,
+    categoryIds: f.cardId && f.cardId !== '__general' ? [f.cardId] : [],
+    dueDate: f.dueDate || null, waitingOn: '',
+  };
+  if (f.priority && f.priority !== 'normal') t.priority = f.priority;
+  if (f.notes) t.notes = f.notes;
+  state.tasks.push(t);
+  return { task: t, saved: saveState() };
+}
+
 // Shows a task on the board: opens any group hiding it, opens its details,
 // scrolls to it and highlights it briefly. Nothing about the task changes.
 function focusTask(id){
@@ -2017,6 +2050,20 @@ function taskEditorPanel(t){
         </div>
       </div>
       ${taskWaitingManageOpen ? waitingInlineManager('task') : ''}
+      <div class="row2" style="gap:8px; margin-bottom:6px;">
+        <div>
+          <label class="hint" style="display:block; margin-bottom:2px;">Priority</label>
+          <select data-task-priority="${t.id}" style="font-size:12.5px; padding:5px 7px;">
+            ${[['low','Low'],['normal','Normal'],['high','High']].map(([v, l]) => `<option value="${v}" ${(t.priority || 'normal') === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="hint" style="display:block; margin-bottom:2px;">Card</label>
+          <div class="editor-card-name">${escapeHtml(taskCardNames(t))}</div>
+        </div>
+      </div>
+      <label class="hint" style="display:block; margin-bottom:2px;">Notes</label>
+      <textarea data-task-notes="${t.id}" rows="2" placeholder="Anything worth remembering" style="font-size:12.5px; padding:5px 7px; margin-bottom:6px;">${escapeHtml(t.notes || '')}</textarea>
       <button data-close-task-editor class="btn btn-ghost" style="padding:4px 10px; font-size:12px;">Done</button>
     </div>
   `;
@@ -2058,7 +2105,9 @@ function cardTaskRow(t, currentCatId, opts){
   const dupeBadge = dupes.length && !(opts && opts.hideDupe)
     ? `<button data-task-dedupe="${t.id}" class="dupe-pill" title="There ${dupes.length===1?'is':'are'} ${dupes.length} other open cop${dupes.length===1?'y':'ies'} of this task. Click to remove ${dupes.length===1?'it':'them'}.">${dupes.length+1} copies</button>`
     : '';
-  const badges = `${others.length ? `<span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dupeBadge}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill">${escapeHtml(t.waitingOn)}</span>` : ''}`;
+  const wd = t.waitingOn ? waitDays(t) : null;
+  const prio = t.priority === 'high' ? `<span class="prio-pill prio-high" title="High priority">High</span>` : t.priority === 'low' ? `<span class="prio-pill" title="Low priority">Low</span>` : '';
+  const badges = `${prio}${others.length ? `<span class="also-in" title="Also in ${escapeAttr(others.join(', '))}">${icon('copy',10)}${others.length}</span>` : ''}${dupeBadge}${dueBadge(t)}${t.waitingOn ? ` <span class="wait-pill" title="Waiting on ${escapeAttr(t.waitingOn)}${wd !== null ? ' for ' + wd + ' day' + (wd === 1 ? '' : 's') : ''}">${escapeHtml(t.waitingOn)}${wd !== null ? ' · ' + wd + 'd' : ''}</span>` : ''}${t.notes ? `<span class="note-pill" title="${escapeAttr(t.notes)}">${icon('list',10)} Note</span>` : ''}`;
   // This used to be a <label>, which meant clicking the text to select or fix it
   // ticked the checkbox. Only the checkbox itself toggles now, and the text is a
   // real input you can type in, select, and copy out of.
@@ -2070,13 +2119,36 @@ function cardTaskRow(t, currentCatId, opts){
         ${badges ? `<div class="task-badges">${badges}</div>` : ''}
         <div class="task-actions">
           <button data-task-copy="${t.id}" class="icon-btn" title="Copy this note">${icon('copy',11)}</button>
-          <button data-open-task-editor="${t.id}" class="icon-btn" title="Due date and waiting-on">${icon('calendar',11)}</button>
+          <button data-open-task-editor="${t.id}" class="icon-btn" title="Details: due date, priority, waiting on, notes">${icon('pencil',11)}</button>
           <button data-task-delete="${t.id}" class="icon-btn danger" title="Remove">${icon('trash',11)}</button>
         </div>
       </div>
     </div>
     ${editingTaskId===t.id ? taskEditorPanel(t) : ''}
   `;
+}
+
+// "17 finished · View completed": opens the most recent ones in the card, with
+// the full history one click further on the card's own screen.
+let completedOpen = new Set();
+function completedBlock(tasks, cardId){
+  const done = tasks.filter(t => t.done).sort((a, b) => (b.completedDate || '') < (a.completedDate || '') ? -1 : (b.completedDate || '') > (a.completedDate || '') ? 1 : 0);
+  if (!done.length) return '';
+  const open = completedOpen.has(cardId);
+  return `
+    <div class="done-block">
+      <button data-completed-toggle="${cardId}" class="card-filed-link">${done.length} finished · ${open ? 'Hide completed' : 'View completed'}</button>
+      ${open ? `
+        <div class="done-list">
+          ${done.slice(0, 6).map(t => `
+            <div class="done-row">
+              <input type="checkbox" checked data-task-toggle="${t.id}" title="Reopen" />
+              <span class="done-text">${escapeHtml(t.text)}</span>
+              <span class="done-when">${t.completedDate ? escapeHtml(dateFromKey(t.completedDate).toLocaleDateString(undefined, { month:'short', day:'numeric' })) : ''}</span>
+            </div>`).join('')}
+          <button data-open-card="${cardId}" class="side-link">${done.length > 6 ? 'All ' + done.length + ' in the history' : 'Open the history'}</button>
+        </div>` : ''}
+    </div>`;
 }
 
 function dueBadge(t){
@@ -2094,7 +2166,6 @@ function generalCard(key, tone, due){
   // aren't gone — they're on the card's own screen.
   const visible = tasks.filter(t => !t.done);
   const openCount = visible.length;
-  const filed = tasks.length - visible.length;
   return `
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       <div class="dcard-head">
@@ -2103,10 +2174,10 @@ function generalCard(key, tone, due){
       <div class="stat-big"><span class="num">${openCount}</span><span class="lbl">open</span></div>
       <p class="hint" style="margin:2px 0 10px;">Tasks not tied to a category</p>
       <div class="dcard-tasks">
-        ${visible.length ? cardTaskRows(visible, '__general') : `<p class="subtle" style="margin:0; font-size:12.5px;">Nothing here.</p>`}
+        ${visible.length ? cardTaskRows(visible, '__general') : `<p class="card-empty">No open tasks</p>`}
       </div>
-      ${filed ? `<button data-open-card="__general" class="card-filed-link">${filed} finished · search them</button>` : ''}
-      <input data-card-task-input="__general" placeholder="Add a general task..." class="card-add-task" />
+      ${completedBlock(tasks, '__general')}
+      <input data-card-task-input="__general" placeholder="+ Add task" title="Type and press Enter to add to General" class="card-add-task" />
     </div>
   `;
 }
@@ -2119,7 +2190,6 @@ function categoryCard(c, key, tone, due){
   const catTasks = state.tasks.filter(t => taskCategoryIds(t).includes(c.id));
   const visible = catTasks.filter(t => !t.done);
   const openCount = visible.length;
-  const filed = catTasks.length - visible.length;
 
   const featured = c.featuredStat;
   const statHtml = `<div class="stat-big"><span class="num">${featured==='remaining' ? remaining : openCount}</span><span class="lbl">${PIN_LABELS[featured]}</span></div>`;
@@ -2140,15 +2210,15 @@ function categoryCard(c, key, tone, due){
       ${asideNote}
       <p class="hint" style="margin:2px 0 8px;">${rec.assigned} assigned · ${rec.completed} done${rec.carried ? ` · ${rec.carried} carried over` : ''}</p>
       <div class="count-edit">
-        <input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" placeholder="Assigned" />
-        <input type="number" min="0" data-count-field="${c.id}_completed" value="${rec.completed}" placeholder="Completed" />
+        <label class="count-field"><span>Assigned</span><input type="number" min="0" data-count-field="${c.id}_assigned" value="${rec.assigned}" aria-label="Assigned today" /></label>
+        <label class="count-field"><span>Done</span><input type="number" min="0" data-count-field="${c.id}_completed" value="${rec.completed}" aria-label="Done today" /></label>
       </div>
       <div class="dcard-bar"><div class="dcard-bar-fill" style="width:${pct}%;"></div></div>
       <div class="dcard-tasks">
-        ${visible.length ? cardTaskRows(visible, c.id) : `<p class="subtle" style="margin:0; font-size:12.5px;">No tasks yet.</p>`}
+        ${visible.length ? cardTaskRows(visible, c.id) : `<p class="card-empty">No open tasks</p>`}
       </div>
-      ${filed ? `<button data-open-card="${c.id}" class="card-filed-link">${filed} finished · search them</button>` : ''}
-      <input data-card-task-input="${c.id}" placeholder="Add a task to ${escapeAttr(c.label)}..." class="card-add-task" />
+      ${completedBlock(catTasks, c.id)}
+      <input data-card-task-input="${c.id}" placeholder="+ Add task" title="Type and press Enter to add to ${escapeAttr(c.label)}" class="card-add-task" />
     </div>
   `;
 }
@@ -5075,11 +5145,11 @@ function attachHandlers(){
   document.querySelectorAll('[data-card-task-input]').forEach(el => el.onkeydown = (e) => {
     if (e.key !== 'Enter') return;
     const text = el.value.trim();
-    if (!text) return;
+    if (!text) { showToast('Type the task first, then press Enter'); return; }
     const raw = el.getAttribute('data-card-task-input');
-    const categoryIds = raw === '__general' ? [] : [raw];
-    state.tasks.push({ id: uid('task'), text, done:false, createdDate: todayKey(), completedDate:null, categoryIds });
-    saveState(); render();
+    createTask({ text, cardId: raw });
+    el.value = '';   // otherwise the re-render puts the typed text back
+    render();
   });
 
   document.querySelectorAll('[data-side-toggle]').forEach(el => el.onclick = () => {
@@ -5097,6 +5167,11 @@ function attachHandlers(){
     t.dueDate = addBusinessDays(today, 3);
     saveState(); render();
     showToast('Follow-up logged · next follow-up ' + dateFromKey(t.dueDate).toLocaleDateString(undefined, { month:'short', day:'numeric' }));
+  });
+  document.querySelectorAll('[data-completed-toggle]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-completed-toggle');
+    if (completedOpen.has(id)) completedOpen.delete(id); else completedOpen.add(id);
+    render();
   });
   const waitMore = document.querySelector('[data-wait-more]');
   if (waitMore) waitMore.onclick = () => { waitingShowAll = !waitingShowAll; render(); };
@@ -5968,6 +6043,20 @@ function attachHandlers(){
   });
 
   // Persist as you change, but do not re-render while the panel is open.
+  document.querySelectorAll('[data-task-priority]').forEach(el => el.onchange = () => {
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-task-priority'));
+    if (!t) return;
+    if (el.value === 'normal') delete t.priority; else t.priority = el.value;
+    saveState(); render();
+  });
+  // Saved on change (blur) like the task text, so typing isn't interrupted.
+  document.querySelectorAll('[data-task-notes]').forEach(el => el.onchange = () => {
+    const t = state.tasks.find(x => x.id === el.getAttribute('data-task-notes'));
+    if (!t) return;
+    const v = el.value.trim();
+    if (v) t.notes = v; else delete t.notes;
+    saveState();
+  });
   document.querySelectorAll('[data-task-due]').forEach(el => el.onchange = () => {
     const t = state.tasks.find(x => x.id === el.getAttribute('data-task-due'));
     if (!t) return;
