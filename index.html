@@ -403,6 +403,39 @@
   .build-stamp{ color:#B3B0AA; margin-top:auto; }
   .side-panels{ border-top:1px solid var(--border); margin-top:8px; }
   .nav-primary{ display:flex; flex-direction:column; gap:1px; }
+  .ws-header{ display:flex; align-items:center; justify-content:space-between; gap:12px 16px; flex-wrap:wrap; margin-bottom:14px; }
+  .ws-title .subtle{ margin-top:2px; }
+  .ws-tools{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .ws-search{ position:relative; display:flex; align-items:center; }
+  .ws-search svg{ position:absolute; left:10px; color:var(--muted); pointer-events:none; }
+  .ws-search input{ width:260px; padding:7px 10px 7px 31px; font-size:13px; }
+  .ws-add{ padding:7px 12px; }
+  .icon-btn[aria-disabled="true"]{ cursor:default; }
+  .summary-row{ display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; margin-bottom:14px; }
+  .metric{ display:flex; flex-direction:column; align-items:flex-start; gap:1px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:10px 14px; box-shadow:var(--shadow); font-family:inherit; text-align:left; color:var(--ink); transition:border-color .12s ease; }
+  button.metric{ cursor:pointer; }
+  button.metric:hover{ border-color:#D9D4CE; }
+  .dcard-head{ gap:4px; }
+  .dcard-head .dcard-title{ margin-right:auto; }
+  .metric-label{ font-size:11.5px; font-weight:600; color:var(--muted); }
+  .metric-value{ font-size:22px; font-weight:700; line-height:1.15; }
+  .metric-sub{ font-size:11.5px; color:var(--muted); }
+  .metric.is-overdue .metric-value{ color:var(--overdue); }
+  .metric.is-soon .metric-value{ color:var(--soon); }
+  .metric.is-ok .metric-value{ color:var(--ok); }
+  @media (max-width: 760px){ .summary-row{ grid-template-columns:repeat(2, minmax(0, 1fr)); } .ws-search input{ width:100%; } .ws-search{ flex:1; } .ws-tools{ width:100%; } }
+  .qa-backdrop{ position:fixed; inset:0; z-index:900; background:rgba(32,43,69,.35); display:flex; align-items:flex-start; justify-content:center; padding:12vh 16px 16px; }
+  .qa-dialog{ width:440px; max-width:100%; background:#fff; border:1px solid var(--border); border-radius:12px; box-shadow:0 18px 50px rgba(32,43,69,.25); padding:16px 18px; }
+  .qa-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .qa-title{ font-size:16px; font-weight:700; }
+  .qa-label{ display:block; font-size:11.5px; font-weight:600; color:var(--muted); margin:8px 0 3px; }
+  .qa-req{ color:var(--overdue); }
+  .qa-grid{ display:grid; grid-template-columns:1.4fr 1fr 0.9fr; gap:8px; }
+  .qa-dialog input, .qa-dialog select, .qa-dialog textarea{ font-size:13px; padding:7px 9px; }
+  .qa-error{ margin-top:8px; font-size:12.5px; color:var(--overdue); background:var(--overdue-soft); border-radius:8px; padding:7px 10px; }
+  .qa-actions{ display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:12px; }
+  .qa-actions .hint{ margin-right:auto !important; }
+  @media (max-width: 520px){ .qa-grid{ grid-template-columns:1fr; } }
   .count-edit{ gap:6px; margin-bottom:8px; }
   .count-field{ display:flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:8px; padding:0 0 0 8px; background:#fff; }
   .count-field:focus-within{ border-color:var(--soon); box-shadow:var(--focus); }
@@ -933,6 +966,18 @@ async function saveOnce(){
   }
 }
 
+// N opens Quick add, unless you're typing somewhere or a dialog is open.
+// Esc closes Quick add.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && quickAdd && !quickAdd.saving) { quickAdd = null; render(); return; }
+  if ((e.key !== 'n' && e.key !== 'N') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+  if (!loadOk || locked || quickAdd || reminderPopups.length) return;
+  e.preventDefault();
+  openQuickAdd(null);
+});
+
 // Coming back to this tab picks up changes saved from another tab or device.
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !loadOk || locked || saveRunning) return;
@@ -985,6 +1030,9 @@ function icon(name, size){
     chevronUp: '<path d="M5 14.5l7-7 7 7"/>',
     list: '<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',
+    bell: '<path d="M6 16.5V11a6 6 0 0112 0v5.5l1.5 2h-15l1.5-2z"/><path d="M10 20.5a2.2 2.2 0 004 0"/>',
+    bellOff: '<path d="M6 16.5V11a6 6 0 0112 0v5.5l1.5 2h-15l1.5-2z"/><path d="M10 20.5a2.2 2.2 0 004 0"/><path d="M4 4l16 16"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
     chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     refresh: '<path d="M20 11a8 8 0 10-1.8 6.1"/><path d="M20 5v6h-6"/>',
     search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
@@ -1056,6 +1104,7 @@ function render(){
       <main class="main"><div class="main-inner${view === 'home' ? ' wide' : ''}">${mainBody()}</div></main>
     </div>
     ${toast ? `<div class="toast">${toast}</div>` : ''}
+    ${quickAddHtml()}
     ${reminderPopupHtml()}
     ${saveProblem ? `<div class="save-problem">${escapeHtml(saveProblem)} <button data-save-retry class="btn btn-ghost" style="padding:4px 10px; font-size:12.5px;">Try again</button></div>` : ''}
   `;
@@ -1066,6 +1115,18 @@ function render(){
     render();
     if (p) setTimeout(() => { reminderPopups.push(p); render(); }, 10 * 60 * 1000);
   });
+  document.querySelectorAll('[data-qa-open]').forEach(el => el.onclick = (e) => { e.stopPropagation(); openQuickAdd(el.getAttribute('data-qa-open')); });
+  document.querySelectorAll('[data-qa-close]').forEach(el => el.onclick = () => { quickAdd = null; render(); });
+  const qaBack = document.querySelector('[data-qa-backdrop]');
+  if (qaBack) qaBack.onmousedown = (e) => { if (e.target === qaBack && !quickAdd.saving) { quickAdd = null; render(); } };
+  document.querySelectorAll('[data-qa-field]').forEach(el => {
+    const k = el.getAttribute('data-qa-field');
+    el.oninput = () => { if (quickAdd) quickAdd[k] = el.value; };
+    if (k === 'card') el.onchange = () => { if (quickAdd) { quickAdd.card = el.value; render(); } };
+    if (k === 'text' || k === 'due') el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submitQuickAdd(); } };
+  });
+  const qaSave = document.querySelector('[data-qa-save]');
+  if (qaSave) qaSave.onclick = () => submitQuickAdd();
   const retry = document.querySelector('[data-save-retry]');
   if (retry) retry.onclick = () => saveState();
 
@@ -1507,21 +1568,79 @@ function viewHome(){
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
 
   return `
-    <div class="page-header">
-      <div class="page-title">Home</div>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <div class="subtle">${dateLabel}</div>
-        <button data-nav="categories" class="icon-btn" title="Manage cards" style="width:28px;height:28px;">${icon('pencil',13)}</button>
-      </div>
-    </div>
-    <div class="field" style="max-width:340px;">
-      <input id="task-search" placeholder="Search cards and tasks" value="${escapeAttr(taskSearchQuery)}" />
-    </div>
+    ${workspaceHeader('Task board', dateLabel)}
+    ${summaryRow(key)}
     ${waitingBadges()}
 
     ${taskSearchQuery.trim() ? taskSearchResults() : `
     ${homeCardsArea(key)}`}
   `;
+}
+
+// Header for the main views: title and date, search, Quick add, desktop
+// pop-ups (the same permission the reminders use) and card settings.
+function workspaceHeader(title, sub){
+  const notif = window.Notification ? Notification.permission : 'unsupported';
+  const bellTitle = notif === 'granted' ? 'Desktop pop-ups are on (change in your browser settings)'
+    : notif === 'denied' ? 'Desktop pop-ups are blocked in your browser settings'
+    : notif === 'default' ? 'Turn on desktop pop-ups for reminders' : 'Desktop pop-ups are not available in this browser';
+  return `
+    <div class="ws-header">
+      <div class="ws-title">
+        <div class="page-title">${escapeHtml(title)}</div>
+        ${sub ? `<div class="subtle">${escapeHtml(sub)}</div>` : ''}
+      </div>
+      <div class="ws-tools">
+        <div class="ws-search">${icon('search',14)}<input id="task-search" placeholder="Search tasks" value="${escapeAttr(taskSearchQuery)}" aria-label="Search tasks" /></div>
+        <button data-qa-open="" class="btn btn-primary btn-sm ws-add" title="Add a task (shortcut: N)">${icon('plus',13)} Add task</button>
+        <button ${notif === 'default' ? 'data-reminder-notify' : ''} class="icon-btn" title="${bellTitle}" ${notif === 'default' ? '' : 'aria-disabled="true"'}>${icon(notif === 'granted' ? 'bell' : 'bellOff', 14)}</button>
+        <button data-nav="categories" class="icon-btn" title="Manage cards (rename, add, remove)">${icon('gear',14)}</button>
+      </div>
+    </div>`;
+}
+
+// Figures are read straight from the data, each task counted once however
+// many cards it sits in:
+//   Remaining   = today's assigned − done across cards (the cards' own rule),
+//                 plus open tasks as a second line
+//   Overdue     = open tasks whose due date has passed
+//   Due soon    = open tasks due today or in the next 3 days
+//   Completed   = today's "done" counts, plus tasks ticked off today
+function summaryMetrics(key){
+  const counts = state.dailyCounts[key] || {};
+  let remaining = 0, doneCount = 0;
+  state.categories.forEach(c => {
+    const r = counts[c.id];
+    if (!r) return;
+    remaining += Math.max(0, (r.assigned || 0) - (r.completed || 0));
+    doneCount += r.completed || 0;
+  });
+  const open = state.tasks.filter(t => !t.done);
+  const soonEnd = keyFromDate(new Date(dateFromKey(key).getTime() + 3 * 86400000));
+  return {
+    remaining, open: open.length,
+    overdue: open.filter(t => t.dueDate && t.dueDate < key),
+    dueSoon: open.filter(t => t.dueDate && t.dueDate >= key && t.dueDate <= soonEnd),
+    dueToday: open.filter(t => t.dueDate === key).length,
+    doneCount, tasksDone: state.tasks.filter(t => t.done && t.completedDate === key).length,
+  };
+}
+function summaryRow(key){
+  const m = summaryMetrics(key);
+  const oldest = m.overdue.length ? daysBetween(m.overdue.map(t => t.dueDate).sort()[0], key) : 0;
+  const tile = (filter, label, value, sub, cls) => `
+    <div class="metric${cls ? ' ' + cls : ''}">
+      <span class="metric-label">${label}</span>
+      <span class="metric-value">${value}</span>
+      <span class="metric-sub">${sub}</span>
+    </div>`;
+  return `
+    <div class="summary-row">
+      ${tile('open', 'Total remaining', m.remaining, `${m.open} open task${m.open === 1 ? '' : 's'}`, '')}
+      ${tile('overdue', 'Overdue', m.overdue.length, m.overdue.length ? `oldest ${oldest} day${oldest === 1 ? '' : 's'}` : 'nothing late', m.overdue.length ? 'is-overdue' : '')}
+      ${tile('soon', 'Due soon', m.dueSoon.length, `${m.dueToday} today · next 3 days`, m.dueSoon.length ? 'is-soon' : '')}
+      ${tile('done', 'Completed today', m.doneCount, `${m.tasksDone} task${m.tasksDone === 1 ? '' : 's'} checked off`, m.doneCount || m.tasksDone ? 'is-ok' : '')}
+    </div>`;
 }
 
 // Every queue shows, busiest first (cardPriority); empty ones end up last and
@@ -1533,6 +1652,88 @@ function homeCardsArea(key){
       ${sortedHomeCards(key).map(card).join('')}
       ${addCardTile()}
     </div>`;
+}
+
+// Quick add: a small dialog that saves through createTask (or the daily
+// checklist). Field values live in quickAdd so a background re-render
+// (reminders, calendar) can't wipe what's been typed.
+let quickAdd = null;   // { text, card, due, priority, notes, error, saving, task }
+function openQuickAdd(cardId){
+  quickAdd = { text: '', card: cardId || (view === 'card' && cardDetailId) || '__general', due: '', priority: 'normal', notes: '', error: '', saving: false, task: null };
+  render();
+  const f = document.getElementById('qa-text'); if (f) f.focus();
+}
+function quickAddHtml(){
+  if (!quickAdd) return '';
+  const q = quickAdd;
+  return `
+    <div class="qa-backdrop" data-qa-backdrop>
+      <div class="qa-dialog" role="dialog" aria-modal="true" aria-labelledby="qa-title">
+        <div class="qa-head">
+          <div id="qa-title" class="qa-title">Add task</div>
+          <button data-qa-close class="icon-btn" title="Close (Esc)" style="width:28px;height:28px;">${icon('close',12)}</button>
+        </div>
+        <label class="qa-label" for="qa-text">Task <span class="qa-req">*</span></label>
+        <input id="qa-text" data-qa-field="text" value="${escapeAttr(q.text)}" placeholder="What needs doing?" autocomplete="off" ${q.task ? 'disabled' : ''} />
+        <div class="qa-grid">
+          <div>
+            <label class="qa-label" for="qa-card">Category <span class="qa-req">*</span></label>
+            <select id="qa-card" data-qa-field="card" ${q.task ? 'disabled' : ''}>
+              <option value="__general" ${q.card === '__general' ? 'selected' : ''}>General</option>
+              ${state.categories.map(c => `<option value="${c.id}" ${q.card === c.id ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
+              <option value="__daily" ${q.card === '__daily' ? 'selected' : ''}>Daily checklist (repeats every day)</option>
+            </select>
+          </div>
+          <div>
+            <label class="qa-label" for="qa-due">Due date</label>
+            <input id="qa-due" type="date" data-qa-field="due" value="${escapeAttr(q.due)}" ${q.card === '__daily' || q.task ? 'disabled' : ''} />
+          </div>
+          <div>
+            <label class="qa-label" for="qa-priority">Priority</label>
+            <select id="qa-priority" data-qa-field="priority" ${q.card === '__daily' || q.task ? 'disabled' : ''}>
+              ${[['low','Low'],['normal','Normal'],['high','High']].map(([v, l]) => `<option value="${v}" ${q.priority === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <label class="qa-label" for="qa-notes">Notes</label>
+        <textarea id="qa-notes" data-qa-field="notes" rows="2" placeholder="Optional" ${q.card === '__daily' || q.task ? 'disabled' : ''}>${escapeHtml(q.notes)}</textarea>
+        ${q.error ? `<div class="qa-error" role="alert">${escapeHtml(q.error)}</div>` : ''}
+        <div class="qa-actions">
+          <span class="hint" style="margin:0;">Enter to save · Esc to close</span>
+          <button data-qa-close class="btn btn-ghost btn-sm">Cancel</button>
+          <button data-qa-save class="btn btn-primary btn-sm" ${q.saving ? 'disabled' : ''}>${q.saving ? 'Saving…' : q.task ? 'Try saving again' : 'Add task'}</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function submitQuickAdd(){
+  const q = quickAdd;
+  if (!q || q.saving) return;   // no double submits
+  const text = q.text.trim();
+  if (!text) { q.error = 'Give the task a name.'; render(); const f = document.getElementById('qa-text'); if (f) f.focus(); return; }
+  q.error = ''; q.saving = true; render();
+  let label;
+  if (q.task) {
+    await saveState();   // retry: the task already exists here, just save again
+    label = 'Task';
+  } else if (q.card === '__daily') {
+    state.dailyTasks = [...(state.dailyTasks || []), { id: uid('daily'), text, weekdays: false }];
+    q.task = 'daily';
+    await saveState();
+    label = 'Daily task';
+  } else {
+    const r = createTask({ text, cardId: q.card, dueDate: q.due || null, priority: q.priority, notes: q.notes.trim() });
+    q.task = r.task;
+    await r.saved;
+    label = 'Task';
+  }
+  if (!quickAdd) return;
+  q.saving = false;
+  if (saveProblem) { q.error = 'Added on this page but not saved to the server yet: ' + saveProblem; render(); return; }
+  const where = q.card === '__daily' ? 'the daily checklist' : q.card === '__general' ? 'General' : ((state.categories.find(c => c.id === q.card) || {}).label || 'its card');
+  quickAdd = null;
+  render();
+  showToast(label + ' added to ' + where);
 }
 
 // Every new queue task goes through here (card inputs and Quick add), so the
@@ -2170,6 +2371,7 @@ function generalCard(key, tone, due){
     <div class="card dcard${tone ? ' tone-'+tone : ''}">
       <div class="dcard-head">
         <button data-open-card="__general" class="dcard-title dcard-title-btn" title="Open this card">General</button>
+        <button data-qa-open="__general" class="icon-btn" title="Add a task to General" style="width:26px;height:26px;">${icon('plus',13)}</button>
       </div>
       <div class="stat-big"><span class="num">${openCount}</span><span class="lbl">open</span></div>
       <p class="hint" style="margin:2px 0 10px;">Tasks not tied to a category</p>
@@ -2200,6 +2402,7 @@ function categoryCard(c, key, tone, due){
       ${tone ? `<span class="tone-flag">${toneLabel(tone, due)}</span>` : ''}
       <div class="dcard-head">
         <button data-open-card="${c.id}" class="dcard-title dcard-title-btn" title="Open this card">${escapeHtml(c.label)}</button>
+        <button data-qa-open="${c.id}" class="icon-btn" title="Add a task to ${escapeAttr(c.label)}" style="width:26px;height:26px;margin-left:auto;">${icon('plus',13)}</button>
         <button data-rescan-card="${c.id}" class="icon-btn" title="Pull in tasks matching this card's name" style="width:26px;height:26px;">${icon('refresh',13)}</button>
         <button data-pin-toggle="${c.id}" class="icon-btn" title="Change pinned stat" style="width:26px;height:26px;">${icon('pin',13)}</button>
         <div class="pin-menu${openPinMenu === c.id ? ' open' : ''}" data-pin-menu="${c.id}">
