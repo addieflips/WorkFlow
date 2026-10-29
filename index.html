@@ -394,6 +394,8 @@ const DEFAULT_STATE = {
   countsCarriedFor: null,  // last day unfinished counts were rolled forward into
   ctCardLinks: {},   // contact tracking type -> the card whose steps to show
   tasks: [],         // { id, text, done, createdDate, completedDate }
+  dailyTasks: [],    // { id, text, weekdays } — a checklist that starts fresh every day
+  dailyDone: {},     // { 'YYYY-MM-DD': [dailyTask ids ticked that day] }
 };
 
 let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -1199,6 +1201,7 @@ function viewHome(){
     ${taskSearchQuery.trim() ? taskSearchResults() : `
     <div class="home-split">
       <div class="home-side">
+        ${dailyTasksPanel()}
         ${dueTodayPanel()}
         ${homeMeetingsPanel()}
         ${goalPanel()}
@@ -1479,6 +1482,45 @@ function goalPanel(){
 
 // Anything due today, anything overdue that was never finished (carry-forward),
 // and anything parked waiting on someone else.
+// Daily tasks: the same checklist every day (or every weekday), unticked each morning.
+let dailyEditing = false;
+function dailyTasksToday(){
+  const wd = new Date().getDay();
+  return (state.dailyTasks || []).filter(t => !t.weekdays || (wd >= 1 && wd <= 5));
+}
+function dailyTasksPanel(){
+  const list = dailyTasksToday();
+  const done = new Set((state.dailyDone || {})[todayKey()] || []);
+  const left = list.filter(t => !done.has(t.id)).length;
+  const all = state.dailyTasks || [];
+  return `
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <label class="section" style="margin:0;">Daily tasks${list.length ? ` · ${list.length - left}/${list.length}` : ''}</label>
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${list.length ? (left ? `<span class="subtle" style="font-size:12.5px;">${left} left</span>` : `<span class="subtle" style="font-size:12.5px; color:#1E7B3A;">All done</span>`) : ''}
+          ${all.length ? `<button data-daily-edit class="icon-btn" title="${dailyEditing ? 'Done editing' : 'Edit daily tasks'}" style="width:24px;height:24px;">${icon(dailyEditing ? 'close' : 'pencil', 11)}</button>` : ''}
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        ${dailyEditing ? all.map(t => `
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+            <span style="flex:1; min-width:0; font-size:13.5px;">${escapeHtml(t.text)}</span>
+            <label class="subtle" style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;"><input type="checkbox" data-daily-weekdays="${t.id}" ${t.weekdays ? 'checked' : ''} style="width:auto;" /> Weekdays only</label>
+            <button data-daily-del="${t.id}" class="icon-btn" title="Delete" style="width:24px;height:24px;">${icon('trash', 11)}</button>
+          </div>`).join('')
+        : list.map(t => `
+          <label style="display:flex; align-items:center; gap:8px; margin-bottom:6px; cursor:pointer; font-size:13.5px;">
+            <input type="checkbox" data-daily-done="${t.id}" ${done.has(t.id) ? 'checked' : ''} style="width:auto;" />
+            <span style="${done.has(t.id) ? 'text-decoration:line-through; color:var(--muted);' : ''}">${escapeHtml(t.text)}</span>
+          </label>`).join('')}
+        ${!all.length ? `<p class="subtle" style="margin:0 0 8px; font-size:12.5px;">Things you do every day. They untick themselves each morning.</p>` : ''}
+        <input data-daily-add placeholder="+ Add a daily task" style="font-size:13px; padding:6px 8px; margin-top:4px;" />
+      </div>
+    </div>
+  `;
+}
+
 function dueTodayPanel(){
   const overdue = state.tasks.filter(isOverdue);
   const today = state.tasks.filter(isDueToday);
@@ -4585,6 +4627,39 @@ function attachHandlers(){
     const raw = el.getAttribute('data-card-task-input');
     const categoryIds = raw === '__general' ? [] : [raw];
     state.tasks.push({ id: uid('task'), text, done:false, createdDate: todayKey(), completedDate:null, categoryIds });
+    saveState(); render();
+  });
+
+  const dailyAdd = document.querySelector('[data-daily-add]');
+  if (dailyAdd) dailyAdd.onkeydown = (e) => {
+    if (e.key !== 'Enter') return;
+    const text = dailyAdd.value.trim();
+    if (!text) return;
+    state.dailyTasks = [...(state.dailyTasks || []), { id: uid('daily'), text, weekdays: false }];
+    saveState(); render();
+    const again = document.querySelector('[data-daily-add]');
+    if (again) again.focus();
+  };
+  document.querySelectorAll('[data-daily-done]').forEach(el => el.onchange = () => {
+    const id = el.getAttribute('data-daily-done'), key = todayKey();
+    const map = state.dailyDone = state.dailyDone || {};
+    const ids = new Set(map[key] || []);
+    if (el.checked) ids.add(id); else ids.delete(id);
+    map[key] = [...ids];
+    // Only the last two weeks are kept.
+    Object.keys(map).sort().slice(0, -14).forEach(k => delete map[k]);
+    saveState(); render();
+  });
+  const dailyEdit = document.querySelector('[data-daily-edit]');
+  if (dailyEdit) dailyEdit.onclick = () => { dailyEditing = !dailyEditing; render(); };
+  document.querySelectorAll('[data-daily-weekdays]').forEach(el => el.onchange = () => {
+    const t = (state.dailyTasks || []).find(x => x.id === el.getAttribute('data-daily-weekdays'));
+    if (t) { t.weekdays = el.checked; saveState(); render(); }
+  });
+  document.querySelectorAll('[data-daily-del]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-daily-del');
+    state.dailyTasks = (state.dailyTasks || []).filter(x => x.id !== id);
+    if (!state.dailyTasks.length) dailyEditing = false;
     saveState(); render();
   });
 
