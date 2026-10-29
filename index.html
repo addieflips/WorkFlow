@@ -1627,8 +1627,8 @@ function remindersPanel(){
               <select id="rem-every" style="width:auto; font-size:12.5px; padding:5px 6px;">
                 ${[[15,'Every 15 min'],[30,'Every 30 min'],[60,'Every hour'],[120,'Every 2 hours'],[240,'Every 4 hours']].map(([v, l]) => `<option value="${v}" ${v === 60 ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
-              <span class="subtle">from</span><input id="rem-from" type="time" value="08:00" style="width:auto; font-size:12.5px; padding:4px 6px;" />
-              <span class="subtle">to</span><input id="rem-to" type="time" value="17:00" style="width:auto; font-size:12.5px; padding:4px 6px;" />
+              <span class="subtle">from</span><input id="rem-from" type="time" value="07:30" style="width:auto; font-size:12.5px; padding:4px 6px;" />
+              <span class="subtle">to</span><input id="rem-to" type="time" value="14:00" style="width:auto; font-size:12.5px; padding:4px 6px;" />
             </div>
             <label class="subtle" style="font-size:12.5px; display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="rem-weekdays" checked style="width:auto;" /> Weekdays only</label>
             <button data-reminder-save class="btn btn-primary" style="padding:6px 12px; font-size:13px; justify-self:start;">Add reminder</button>
