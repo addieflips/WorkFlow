@@ -7001,7 +7001,8 @@ function orphanData(){
   if (!o.batch) o.batch = { orphans: [], overrides: {}, inboxes: {}, tabOverride: '' };
   if (!o.batch.overrides) o.batch.overrides = {};
   if (!o.batch.inboxes) o.batch.inboxes = {};       // orphan id -> inbox picked by hand
-  if (!o.leaderFix || typeof o.leaderFix !== 'object') o.leaderFix = {};  // leader id -> [lat, lon] | 'list' | { zip }
+  if (!o.leaderFix || typeof o.leaderFix !== 'object') o.leaderFix = {};
+  if (!Array.isArray(o.priority)) o.priority = [];   // leader IDs that must get an orphan in the next pull  // leader id -> [lat, lon] | 'list' | { zip }
   if (!o.used || typeof o.used !== 'object') o.used = { month: monthKey(), ids: [] };
   // A leader can get one orphan per month, so the list starts over each month.
   if (o.used.month !== monthKey()) o.used = { month: monthKey(), ids: [] };
@@ -7378,6 +7379,39 @@ function computeOrphanResults(){
     const choice = want && row.ranked.find(x => x.l.id === String(want));
     if (choice && !taken.has(choice.l.id)) { pick(row, choice); row.manual = true; }
   });
+  // "Must get an orphan" leaders go next, whatever their Count, tab or
+  // month: each takes the closest unplaced orphan in their own country, or
+  // the closest orphan from anywhere when their country has none today.
+  const leaderRec = new Map(o.leaders.map((l, idx) => [String(l[0]), l]));
+  (o.priority || []).forEach(pid => {
+    const l = leaderRec.get(String(pid));
+    if (!l || taken.has(String(pid))) return;
+    const zipC = orphanZipCountry(l[2]);
+    const lead = { idx: -1, id: String(l[0]), name: l[1] || '', city: l[3] || '', postal: orphanLeaderPostal(l), coords: zipC ? null : orphanLeaderCoords(l), country: l[2], priority: true };
+    const free = rows.filter(r => r.ranked && !r.leader);
+    const miles = r => lead.coords && r.coords ? Math.round(haversineMiles(r.coords, lead.coords) * 100) / 100 : null;
+    let cands = free.filter(r => r.match === l[2]), abroad = false;
+    if (!cands.length) {
+      // Prefer an orphan whose own country has no leader to give it anyway.
+      abroad = true;
+      const anywhere = free.filter(r => miles(r) !== null);
+      const homeless = anywhere.filter(r => !(byCountry.get(r.match) || []).some(x => !taken.has(x.id)));
+      cands = homeless.length ? homeless : anywhere;
+    }
+    if (!cands.length) return;
+    let best;
+    if (zipC && !abroad) {
+      const z = r => orphanZipScore(orphanZip(r.postal) || orphanPostalIn(r.city), lead.postal);
+      best = cands.slice().sort((a, b) => z(b).prefix - z(a).prefix || z(a).gap - z(b).gap)[0];
+    } else {
+      best = cands.filter(r => miles(r) !== null).sort((a, b) => miles(a) - miles(b))[0] || cands[0];
+    }
+    const choice = { l: lead, miles: miles(best), abroad };
+    best.ranked = [choice, ...best.ranked.filter(x => x.l.id !== lead.id)];
+    pick(best, choice);
+    best.priorityLeader = true;
+    if (abroad) best.abroad = true;
+  });
   rows.forEach(row => {
     if (!row.ranked || row.leader) return;
     const choice = row.ranked.find(x => !taken.has(x.l.id));
@@ -7745,6 +7779,7 @@ function viewOrphans(){
       </div>
     </div>
 
+    ${orphanPriorityCard(rows)}
     ${o.batch.orphans.length && !o.batch.tableau ? '' : orphanTableauCard()}
 
     <div class="card" style="margin-bottom:16px;">
@@ -7922,7 +7957,7 @@ function orphanRow(r){
       <select data-orph-pick="${escapeAttr(r.id)}" class="orph-pick">
         ${r.leader ? '' : '<option value="">Pick a leader (takes them from another orphan)</option>'}
         ${r.options.map(x => `<option value="${escapeAttr(x.l.id)}" ${r.leader && r.leader.id===x.l.id?'selected':''}>${escapeHtml(x.l.id)} · ${escapeHtml(x.l.name || x.l.city || x.l.postal)}${x.abroad ? ', ' + escapeHtml(x.l.country) : ''} (${x.miles != null ? x.miles + ' mi' : 'zip ' + escapeHtml(x.l.postal)})${x.heldBy ? ' — now with ' + escapeHtml(x.heldBy) : ''}</option>`).join('')}
-      </select>${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}${r.abroad ? ` <span class="badge" title="No eligible leader left in ${escapeAttr(r.match)}, so the nearest leader in another country">other country</span>` : ''}` : '—';
+      </select>${r.priorityLeader ? ' <span class="badge" title="On the Must get an orphan list">must get one</span>' : ''}${r.manual ? ' <span class="badge" title="Picked by hand">manual</span>' : ''}${r.abroad ? ` <span class="badge" title="No eligible leader left in ${escapeAttr(r.match)}, so the nearest leader in another country">other country</span>` : ''}` : '—';
   } else if (r.status === 'needzip') {
     leaderCell = `<span class="orph-ll"><input data-orph-zip="${escapeAttr(r.id)}" ${orphanDraft('ozip:' + r.id)} placeholder="Postal code" style="width:110px;" /><button data-orph-zip-save="${escapeAttr(r.id)}" class="btn btn-ghost" style="padding:4px 8px; font-size:12px;">Save</button></span>`;
   } else if (r.status === 'needcoords') {
@@ -8275,6 +8310,39 @@ function orphanFilterTableau(text, range){
 
 let orphanTableauWhy = {};
 
+// Leaders who must get an orphan in the next pull. They stay listed until a
+// finished pull places them.
+let orphanPriorityInput = '';
+function orphanPriorityCard(rows){
+  const o = orphanData();
+  const list = o.priority || [];
+  const byId = new Map(o.leaders.map(l => [String(l[0]), l]));
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <label class="section">Must get an orphan${list.length ? ' · ' + list.length : ''}</label>
+      <div class="hint" style="margin:0 0 8px;">Leader IDs here get the closest orphan in their country in the next pull, even with a 0 in Count, on the other tab, or already used this month. If their country has no orphan that pull, they get the closest orphan that has no leader in its own country, or failing that the closest one from anywhere. They come off the list when the pull is finished.</div>
+      ${list.map(id => {
+        const l = byId.get(String(id));
+        const row = rows.find(r => r.leader && r.leader.id === String(id));
+        const status = !l ? '<span class="orph-pill orph-pill-bad">Not in the leader list</span>'
+          : row ? `<span class="orph-pill orph-pill-ok">Gets ${escapeHtml(row.id)} (${escapeHtml(row.match)}${row.miles != null ? ', ' + row.miles + ' mi' : ''})</span>`
+          : rows.length ? '<span class="orph-pill orph-pill-warn">No orphan to give yet</span>'
+          : '<span class="subtle" style="font-size:12.5px;">Waiting for the next pull</span>';
+        return `
+          <div style="display:flex; align-items:center; gap:10px; padding:5px 0; border-top:1px solid var(--border); flex-wrap:wrap;">
+            <b style="font-size:13.5px;">${escapeHtml(id)}</b>
+            ${l ? `<span class="subtle" style="font-size:12.5px;">${escapeHtml([l[3], l[2]].filter(Boolean).join(', '))} · ${escapeHtml(l[7])} tab · Count ${escapeHtml(l[10] === undefined || l[10] === '' ? '?' : String(l[10]))}</span>` : ''}
+            ${status}
+            <button data-orph-prio-del="${escapeAttr(id)}" class="icon-btn" title="Take off the list" style="width:24px; height:24px; margin-left:auto;">${icon('close',11)}</button>
+          </div>`;
+      }).join('')}
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <input id="orph-prio-id" value="${escapeAttr(orphanPriorityInput)}" placeholder="Leader ID" style="max-width:180px; padding:6px 9px; font-size:13px;" />
+        <button data-orph-prio-add class="btn btn-ghost btn-sm">Add</button>
+      </div>
+    </div>`;
+}
+
 function orphanTableauCard(){
   const o = orphanData(), range = orphanPullRange(), t = o.batch.tableau;
   const fmt = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month:'numeric', day:'numeric' }) : '…';
@@ -8363,6 +8431,26 @@ function attachOrphanHandlers(){
   const q = sel => document.querySelector(sel);
   const all = (sel, fn) => document.querySelectorAll(sel).forEach(fn);
 
+  const prioInput = document.getElementById('orph-prio-id');
+  const prioAdd = () => {
+    const id = String(orphanPriorityInput || '').trim().replace(/\D/g, '');
+    if (!id) { showToast('Type a leader ID'); return; }
+    if (!o.priority.includes(id)) o.priority.push(id);
+    orphanPriorityInput = '';
+    saveState(); render();
+    showToast(id + ' will get an orphan in the next pull');
+  };
+  if (prioInput) {
+    prioInput.oninput = () => { orphanPriorityInput = prioInput.value; };
+    prioInput.onkeydown = (e) => { if (e.key === 'Enter') prioAdd(); };
+  }
+  const prioBtn = document.querySelector('[data-orph-prio-add]');
+  if (prioBtn) prioBtn.onclick = prioAdd;
+  document.querySelectorAll('[data-orph-prio-del]').forEach(el => el.onclick = () => {
+    const id = el.getAttribute('data-orph-prio-del');
+    o.priority = o.priority.filter(x => x !== id);
+    saveState(); render();
+  });
   const errClose = q('[data-orph-error-close]');
   if (errClose) errClose.onclick = () => { orphanError = ''; render(); };
   const setupBtn = q('[data-orph-setup]');
@@ -8697,6 +8785,7 @@ function attachOrphanHandlers(){
       `• The loaded orphans are cleared; the placed rows stay available to copy.`;
     if (!confirm(msg)) return;
     o.used.ids = [...new Set([...o.used.ids, ...leaderIds])];
+    o.priority = (o.priority || []).filter(id => !leaderIds.includes(String(id)));
     const range = orphanPullRange();
     o.pullLog.push({ date: todayKey(), tab: orphanTabToday(), placed: placed.length, from: range.from, to: range.to });
     // A second pull on the same day joins the first, so the emails go out once.
