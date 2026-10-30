@@ -8290,28 +8290,59 @@ function orphanFilterTableau(text, range){
   if (missing.length) return { error: 'This doesn’t look like the Tableau download. Missing columns: ' + missing.join(', ') + '.' };
   const all = rows.filter(r => /\d/.test(r.id));
   // ids go to BI; retail customers skip leader assignment (SOP Phase 3, step 6).
-  const res = { total: all.length, inRange: 0, noDate: 0, removed: {}, ids: [], retail: [], from: range.from, to: range.to };
+  const res = { total: all.length, inRange: 0, noDate: 0, outOfRange: 0, dupes: 0, removed: {}, ids: [], retail: [], from: range.from, to: range.to };
   const why = {};   // id -> reason it shouldn't be pulled (kept in memory only)
-  const drop = (id, reason) => { res.removed[reason] = (res.removed[reason] || 0) + 1; why[id] = reason; };
+  const list = [];  // every row and what happened to it, for the "show every row" table (memory only)
+  const seen = new Set();
+  const note = (r, d, result) => list.push({ id: r.id, country: r.country || '', market: [r.market, r.submarket].filter(Boolean).join(' / '), status: r.status || '', type: r.type || '', order: d || '', result });
+  const drop = (r, d, reason) => { res.removed[reason] = (res.removed[reason] || 0) + 1; why[r.id] = reason; note(r, d, 'Removed: ' + reason); };
   const md = d => String(Number(d.slice(5, 7))) + '/' + String(Number(d.slice(8, 10)));
   res.europe = all.some(r => /europe/i.test(r.market) || /^eu\b/i.test(r.submarket));
   all.forEach(r => {
     const d = orphanParseDate(r.order);
-    if (!d) { res.noDate++; why[r.id] = 'no Most Recent Order date'; return; }
-    if (d < range.from || d > range.to) { why[r.id] = 'last ordered ' + md(d) + (d.slice(0, 4) !== range.to.slice(0, 4) ? '/' + d.slice(0, 4) : ''); return; }
+    // The same member on two rows is one orphan.
+    if (seen.has(r.id)) { res.dupes++; note(r, d, 'Duplicate row (counted once)'); return; }
+    seen.add(r.id);
+    if (!d) { res.noDate++; why[r.id] = 'no Most Recent Order date'; note(r, d, 'Skipped: no Most Recent Order date'); return; }
+    if (d < range.from || d > range.to) { res.outOfRange++; why[r.id] = 'last ordered ' + md(d) + (d.slice(0, 4) !== range.to.slice(0, 4) ? '/' + d.slice(0, 4) : ''); note(r, d, 'Outside the dates'); return; }
     res.inRange++;
     // Exactly "Active": In-Active, Suspended and Terminated are left out.
-    if (r.status && !/^active$/i.test(r.status.trim())) return drop(r.id, r.status.trim() || 'not Active');
-    if (orphanSelfPlacing(r.market) || orphanSelfPlacing(r.country)) return drop(r.id, orphanCountry(orphanSelfPlacing(r.market) ? r.market : r.country).match);
-    if (/\btest\b/i.test(r.name)) return drop(r.id, 'test account');
-    if (/retail/i.test(r.type)) { const c = orphanCountry(r.country || r.market); res.retail.push({ id: r.id, country: c.match, inbox: c.inbox }); return; }
+    if (r.status && !/^active$/i.test(r.status.trim())) return drop(r, d, r.status.trim() || 'not Active');
+    // A known country decides (a Hong Kong member under "Greater China" stays);
+    // the market only decides when the country is blank or unrecognised.
+    const knownCountry = r.country && orphanCountryTable().byName.has(orphanNorm(r.country)) && orphanCountry(r.country).match !== 'CHECK COUNTRY';
+    const self = knownCountry || orphanSelfPlacing(r.country) ? orphanSelfPlacingIn(r.country) : orphanSelfPlacingIn(r.country, r.market, r.submarket);
+    if (self) return drop(r, d, self);
+    if (/\btest\b/i.test(r.name)) return drop(r, d, 'test account');
+    if (/retail/i.test(r.type)) { const c = orphanCountry(r.country || r.market); res.retail.push({ id: r.id, country: c.match, inbox: c.inbox }); note(r, d, 'Retail customer'); return; }
     res.ids.push(r.id);
+    note(r, d, 'For BI');
   });
   orphanTableauWhy = why;
+  orphanTableauRows = list;
   return res;
 }
 
+// Which self-placing market a Tableau row belongs to, if any. Country codes
+// and spellings go through the country table (KOR, "Korea, Republic of"…);
+// market names are matched by word ("Greater China", "ANZ", "Japan Market").
+const SELF_PLACING_NAMES = ['Australia', 'China', 'India', 'Japan', 'Korea', 'New Zealand'];
+function orphanSelfPlacingIn(...vals){
+  for (const v of vals) {
+    if (!v) continue;
+    if (orphanSelfPlacing(v)) return orphanCountry(v).match || v;
+    const m = orphanCountry(v).match;
+    const hit = SELF_PLACING_NAMES.find(n => n === m || (n === 'Korea' && /korea/i.test(m || '')));
+    if (hit) return hit;
+    const word = String(v).match(/\b(australia|anz|china|india|japan|korea|new zealand)\b/i);
+    if (word) return word[1].toUpperCase() === 'ANZ' ? 'Australia / New Zealand' : word[1].replace(/\b\w/g, c => c.toUpperCase());
+  }
+  return '';
+}
+
 let orphanTableauWhy = {};
+let orphanTableauRows = [];
+let orphanTableauShow = '';   // which rows the table shows ('' = hidden)
 
 // Leaders who must get an orphan in the next pull. They stay listed until a
 // finished pull places them.
@@ -8361,7 +8392,20 @@ function orphanTableauCard(){
           <b>${t.ids.length + (t.retail || []).length} orphan${t.ids.length + (t.retail || []).length === 1 ? '' : 's'} to pull</b> from ${escapeHtml(t.file || 'the download')}${(t.retail || []).length ? ` (${(t.retail || []).length} retail customer${t.retail.length === 1 ? '' : 's'} + ${t.ids.length} for BI)` : ''}: ${t.inRange} ordered ${fmt(t.from)}–${fmt(t.to)} out of ${t.total} rows.
           ${Object.keys(t.removed).length ? `Removed: ${escapeHtml(Object.entries(t.removed).map(([k, n]) => `${n} ${k}`).join(', '))}.` : ''}
           ${t.noDate ? `${t.noDate} row${t.noDate === 1 ? ' had' : 's had'} no Most Recent Order date and ${t.noDate === 1 ? 'was' : 'were'} skipped.` : ''}
+          ${t.dupes ? `${t.dupes} duplicate row${t.dupes === 1 ? '' : 's'} (same ID twice) counted once.` : ''}
         </div>
+        ${orphanTableauRows.length ? `
+          <div style="margin:0 0 10px;">
+            <span class="hint" style="margin:0 6px 0 0;">Compare with your own list:</span>
+            ${[['all', 'Every row · ' + orphanTableauRows.length], ['For BI', 'For BI · ' + t.ids.length], ['Retail customer', 'Retail · ' + (t.retail || []).length], ['Removed', 'Removed · ' + orphanTableauRows.filter(r => r.result.startsWith('Removed')).length], ['Outside the dates', 'Outside the dates · ' + orphanTableauRows.filter(r => r.result === 'Outside the dates').length]].map(([k, l]) => `<button data-orph-tab-show="${escapeAttr(k)}" class="filter-chip${orphanTableauShow === k ? ' on' : ''}">${escapeHtml(l)}</button>`).join(' ')}
+          </div>
+          ${orphanTableauShow ? (() => {
+            const shown = orphanTableauRows.filter(r => orphanTableauShow === 'all' || (orphanTableauShow === 'Removed' ? r.result.startsWith('Removed') : r.result === orphanTableauShow));
+            return `<div class="orph-table-wrap" style="max-height:340px; overflow:auto; margin-bottom:10px;">
+              <table class="orph-table"><thead><tr><th>ID</th><th>Country</th><th>Market</th><th>Status</th><th>Account type</th><th>Last order</th><th>Result</th></tr></thead>
+              <tbody>${shown.map(r => `<tr><td>${escapeHtml(r.id)}</td><td>${escapeHtml(r.country)}</td><td>${escapeHtml(r.market)}</td><td>${escapeHtml(r.status)}</td><td>${escapeHtml(r.type)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.result)}</td></tr>`).join('')}</tbody></table>
+            </div>`;
+          })() : ''}` : ''}
         ${!t.europe ? `<div class="orph-alert" style="margin:0 0 8px; padding:10px 12px; border-radius:10px;"><b>No Europe orphans in this download.</b> In Tableau, Sub Market EU has probably unchecked itself again: select all, Apply, Play, and download again.</div>` : ''}
         ${(t.from !== range.from || t.to !== range.to) ? `<div class="orph-geo" style="margin:0 0 8px;">The dates under This pull have changed since this file was read. Upload it again to use ${fmt(range.from)}–${fmt(range.to)}.</div>` : ''}
         ${(t.retail || []).length ? `
@@ -8458,6 +8502,7 @@ function attachOrphanHandlers(){
     o.priority = o.priority.filter(p => p.id !== id);
     saveState(); render();
   });
+  all('[data-orph-tab-show]', el => el.onclick = () => { const k = el.getAttribute('data-orph-tab-show'); orphanTableauShow = orphanTableauShow === k ? '' : k; render(); });
   const errClose = q('[data-orph-error-close]');
   if (errClose) errClose.onclick = () => { orphanError = ''; render(); };
   const setupBtn = q('[data-orph-setup]');
