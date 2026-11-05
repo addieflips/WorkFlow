@@ -350,6 +350,8 @@
   .deadline-late{ background:#FDECEA; }
   .deadline-pill{ font-size:11.5px; font-weight:700; background:#fff; color:var(--primary-dark); border-radius:999px; padding:3px 10px; white-space:nowrap; }
   .deadline-pill-late{ color:#C13B30; }
+  .ask-turn{ margin-bottom:16px; }
+  .ask-q{ margin:0 0 8px auto; max-width:85%; width:fit-content; font-size:14px; line-height:1.55; white-space:pre-wrap; background:var(--primary-soft); color:var(--primary-dark); border-radius:12px 12px 3px 12px; padding:9px 13px; }
   .lead-q{ font-size:14px; line-height:1.6; background:#fff; border:1px solid #F2D398; border-radius:9px; padding:10px 12px; }
   .dcard{ position:relative; transition:border-color .15s ease, background .15s ease; }
   .tone-red{ box-shadow:inset 3px 0 0 #C13B30; }
@@ -3054,13 +3056,19 @@ function tasksTable(dayKeys, todayK){
 }
 
 // ---------------- AI Assistant ----------------
-let askQuestion = '';
+// The Assistant is a conversation: each turn is { question, result }, where result is
+// { answerFound, answer, explanation, sourceIds, confidence, suggestedQuestion, forMemberEmail, leadSaved }.
+// Follow-ups send the earlier turns along so "what about…" questions make sense,
+// but every answer is still grounded only in the Knowledge Base articles.
+// Kept in memory only: a reload starts a fresh conversation.
+let askThread = [];
+let askQuestion = '';      // draft in the input box
+let askPending = '';       // question currently being answered
 let askLoading = false;
 let askError = '';
-let askResult = null;      // { answerFound, answer, explanation, sourceIds, confidence, suggestedQuestion, forMemberEmail }
-let leadAnswerText = '';
-let savingLeadAnswer = false;
 let askForEmail = false;   // "draft this as a message to send to a member" toggle
+const ASK_HISTORY_TURNS = 6;      // earlier turns sent with a follow-up
+const ASK_HISTORY_ANSWER_CHARS = 1500;
 
 // Renders answer blocks ({type:'paragraph',text} | {type:'bullets',items:[]}) as real HTML —
 // never raw markdown text, since escapeHtml would print ** and - literally.
@@ -3094,22 +3102,39 @@ function viewAssistant(){
         <p class="hint" style="margin-top:8px;">Answers come only from what you've saved, so add an article or two first.</p>
       </div>
     ` : `
-      <div class="card" style="margin-bottom:16px;">
-        <label class="section">Ask a question</label>
-        <p class="hint" style="margin:3px 0 8px;">Answered only from your ${state.kb.length} saved article${state.kb.length===1?'':'s'} — never from anything else. The most relevant ones are consulted for each question.</p>
-        <textarea id="ask-input" rows="3" placeholder="Can this account transfer be approved if the member has already had an enroller change?">${escapeHtml(askQuestion)}</textarea>
+      ${askThread.map((t, i) => `
+        <div id="ask-turn-${i}" class="ask-turn">
+          <div class="ask-q">${escapeHtml(t.question)}</div>
+          ${askResultPanel(t.result, i)}
+        </div>
+      `).join('')}
+
+      ${askLoading ? `
+        <div class="ask-turn">
+          <div class="ask-q">${escapeHtml(askPending)}</div>
+          <div class="card"><p class="hint" style="margin:0;">Checking your articles…</p></div>
+        </div>
+      ` : ''}
+
+      <div class="card" id="ask-box" style="margin-bottom:16px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <label class="section" style="margin:0;">${askThread.length ? 'Ask a follow-up' : 'Ask a question'}</label>
+          ${askThread.length ? `<button data-clear-ask class="btn btn-ghost" style="padding:5px 12px; font-size:12.5px;" ${askLoading?'disabled':''}>New conversation</button>` : ''}
+        </div>
+        <p class="hint" style="margin:3px 0 8px;">${askThread.length
+          ? 'Follow-ups can refer back to the conversation above ("what if they\'ve already had two?"). Answers still come only from your saved articles.'
+          : `Answered only from your ${state.kb.length} saved article${state.kb.length===1?'':'s'} — never from anything else. The most relevant ones are consulted for each question. You can ask follow-ups afterwards.`}</p>
+        <textarea id="ask-input" rows="3" placeholder="${askThread.length ? 'What about if the member is a Silver?' : 'Can this account transfer be approved if the member has already had an enroller change?'}">${escapeHtml(askQuestion)}</textarea>
         <label style="display:flex; align-items:center; gap:8px; margin-top:9px; font-size:13px; color:var(--muted); cursor:pointer;">
-          <input type="checkbox" id="ask-for-email" ${askForEmail?'checked':''} />
+          <input type="checkbox" id="ask-for-email" ${askForEmail?'checked':''} style="width:auto; margin:0;" />
           Draft this as a message to send to a member
         </label>
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <button data-run-ask class="btn btn-primary" style="padding:9px 18px;" ${askLoading?'disabled':''}>${askLoading ? 'Checking…' : 'Ask'}</button>
-          ${askResult ? `<button data-clear-ask class="btn btn-ghost" style="padding:9px 16px;">Clear</button>` : ''}
+        <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+          <button data-run-ask class="btn btn-primary" style="padding:9px 18px;" ${askLoading?'disabled':''}>${askLoading ? 'Checking…' : (askThread.length ? 'Ask follow-up' : 'Ask')}</button>
+          <span class="hint">Ctrl+Enter to send</span>
         </div>
         ${askError ? `<p style="color:#D0453A; font-size:13px; margin:10px 0 0;">${escapeHtml(askError)}</p>` : ''}
       </div>
-
-      ${askResult ? askResultPanel() : ''}
     `}
   `;
 }
@@ -3119,9 +3144,7 @@ function confidencePill(level){
   return `<span class="conf-pill ${map[level]||'conf-low'}">${escapeHtml(level||'low')} confidence</span>`;
 }
 
-function askResultPanel(){
-  const r = askResult;
-
+function askResultPanel(r, i){
   if (!r.answerFound) {
     return `
       <div class="card" style="border-color:#F2D398; background:#FFFBF2;">
@@ -3131,14 +3154,17 @@ function askResultPanel(){
           <div style="border-top:1px solid #F2D398; margin-top:12px; padding-top:12px;">
             <label class="section">Ask your team lead</label>
             <div class="lead-q">${escapeHtml(r.suggestedQuestion)}</div>
-            <button data-copy-lead-question class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin-top:8px;">${icon('copy',13)} Copy question</button>
+            <button data-copy-lead-question="${i}" class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin-top:8px;">${icon('copy',13)} Copy question</button>
 
+            ${r.leadSaved ? `
+              <p class="hint" style="margin-top:12px; color:#2F7A4F; font-weight:600;">Team lead's answer saved to the Knowledge Base — ask again and it will be used.</p>
+            ` : `
             <div style="margin-top:14px;">
               <label class="hint" style="display:block; margin-bottom:4px;">When you get an answer, paste it here to save it</label>
-              <textarea id="lead-answer" rows="3" placeholder="What your team lead said...">${escapeHtml(leadAnswerText)}</textarea>
-              <button data-save-lead-answer class="btn btn-primary" style="padding:7px 15px; font-size:13px; margin-top:8px;">Save to Knowledge Base</button>
+              <textarea id="lead-answer-${i}" rows="3" placeholder="What your team lead said..."></textarea>
+              <button data-save-lead-answer="${i}" class="btn btn-primary" style="padding:7px 15px; font-size:13px; margin-top:8px;">Save to Knowledge Base</button>
               <p class="hint" style="margin-top:6px;">Saved with source "Team Lead" and today's date, so next time this question answers itself.</p>
-            </div>
+            </div>`}
           </div>` : ''}
       </div>
     `;
@@ -3152,7 +3178,7 @@ function askResultPanel(){
         ${confidencePill(r.confidence)}
       </div>
       <div style="font-size:15px; line-height:1.6;">${renderAnswerBlocks(r.answer)}</div>
-      <button data-copy-answer class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin:0 0 12px;">${icon('copy',13)} ${r.forMemberEmail ? 'Copy for email' : 'Copy'}</button>
+      <button data-copy-answer="${i}" class="btn btn-ghost" style="padding:6px 13px; font-size:12.5px; margin:0 0 12px;">${icon('copy',13)} ${r.forMemberEmail ? 'Copy for email' : 'Copy'}</button>
       ${r.explanation ? `<p style="font-size:13.5px; line-height:1.6; color:var(--muted); margin:0 0 12px;">${escapeHtml(r.explanation)}</p>` : ''}
 
       <div style="border-top:1px solid var(--border); padding-top:11px;">
@@ -3203,9 +3229,18 @@ function scoreArticle(a, keys){
 
 const ASK_MAX_ARTICLES = 20;
 
-function articlesForQuestion(q){
+// For a follow-up, the new question counts most, but earlier questions in the
+// conversation and the articles already cited still count, so a short follow-up
+// like "and for a Silver?" keeps finding the articles the conversation is about.
+function articlesForQuestion(q, history){
   const keys = askKeywords(q);
-  const scored = state.kb.map(a => ({ a, s: scoreArticle(a, keys) }))
+  const prior = (history || []).slice(-ASK_HISTORY_TURNS);
+  const priorKeys = askKeywords(prior.map(t => t.question).join(' ')).filter(k => !keys.includes(k));
+  const cited = new Set(prior.flatMap(t => t.result.sourceIds || []));
+  const scored = state.kb.map(a => ({
+      a,
+      s: scoreArticle(a, keys) * 2 + scoreArticle(a, priorKeys) + (cited.has(a.id) ? 15 : 0),
+    }))
     .filter(x => x.s > 0)
     .sort((x,y) => y.s - x.s);
   if (!scored.length) return state.kb.slice(0, ASK_MAX_ARTICLES);
@@ -3240,9 +3275,25 @@ function extractJson(raw){
 async function runAsk(){
   const q = (document.getElementById('ask-input')?.value || '').trim();
   if (!q) { showToast('Type a question first'); return; }
-  askQuestion = q; askError = ''; askResult = null; askLoading = true; render();
+  const history = askThread.slice(-ASK_HISTORY_TURNS);
+  const forMemberEmail = askForEmail;
+  askPending = q; askQuestion = ''; askError = ''; askLoading = true;
+  // render() keeps whatever is in the focused box, so empty the box itself too.
+  const askInputBox = document.getElementById('ask-input');
+  if (askInputBox) askInputBox.value = '';
+  render();
+  document.getElementById('ask-box')?.scrollIntoView({ block: 'end', behavior: 'smooth' });
 
-  const relevant = articlesForQuestion(q);
+  const conversation = history.map((t, n) => {
+    const r = t.result;
+    let said = r.answerFound
+      ? blocksToPlainText(r.answer)
+      : 'No answer found in the articles. ' + (r.explanation || '');
+    if (said.length > ASK_HISTORY_ANSWER_CHARS) said = said.slice(0, ASK_HISTORY_ANSWER_CHARS) + '…';
+    return `Q${n+1}: ${t.question}\nA${n+1}: ${said}`;
+  }).join('\n\n');
+
+  const relevant = articlesForQuestion(q, history);
   const articles = relevant.map(a => [
     "[" + a.id + "] TITLE: " + a.title,
     "CATEGORY: " + a.category,
@@ -3262,13 +3313,16 @@ Rules:
 - Cite the id of every article you relied on, exactly as given in square brackets.
 - Set confidence: "high" if the articles directly and completely answer it; "medium" if they answer it but leave some ambiguity; "low" if you are stretching.
 - If articles conflict, say so in the explanation rather than picking one silently.
-
+${conversation ? `- This QUESTION is a follow-up in an ongoing conversation (shown under CONVERSATION SO FAR). Use the conversation only to work out what the question refers to — who "they" are, what "that" or "instead" means, which situation is being discussed. Earlier answers are NOT a source: every fact in your answer must still come from the reference articles, and cite them again.
+- If the follow-up changes a detail of the earlier situation, answer for the changed situation; do not repeat the earlier answer unless it still applies.
+- If answerFound is false, the suggestedQuestion must stand on its own: spell out the full situation from the conversation, since the team lead won't see it.
+` : ''}
 FORMAT for "answer":
 - "answer" is an array of content blocks — never a single string.
 - Each block is either {"type":"paragraph","text":"..."} or {"type":"bullets","items":["...","..."]}.
 - Default to short paragraphs. Only use a "bullets" block if the question explicitly asks for bullet points, a list, or steps.
 - Never use markdown syntax anywhere in the text — no **, no leading -, no #, no numbered "1.". The app renders these blocks directly as real paragraphs and bullets, so markdown characters would show up as literal punctuation.
-${askForEmail ? `
+${forMemberEmail ? `
 This answer will be copied and pasted directly into an email sent to a doTERRA member. Write "answer" as member-facing copy:
 - Plain, warm, professional tone for a customer — not internal shorthand or jargon.
 - Leave out internal-only process detail (Compliance escalation paths, internal form routing, internal caveats) unless the member's question is directly about that.
@@ -3279,7 +3333,10 @@ This answer will be copied and pasted directly into an email sent to a doTERRA m
 Return ONLY valid JSON, no markdown fences, in exactly this shape:
 {"answerFound": true, "answer": [{"type":"paragraph","text":"..."}], "explanation": "why, referencing what the articles say", "sourceIds": ["kb_abc"], "confidence": "high", "suggestedQuestion": ""}
 
-QUESTION:
+${conversation ? `CONVERSATION SO FAR (context only — not a source):
+${conversation}
+
+` : ''}QUESTION:
 ${q}
 
 REFERENCE ARTICLES:
@@ -3317,18 +3374,27 @@ ${articles}`;
       blocks = [{ type: 'paragraph', text: parsed.answer }];
     }
 
-    askResult = {
+    askThread.push({ question: q, result: {
       answerFound: !!parsed.answerFound && blocks.length > 0,
       answer: blocks,
       explanation: parsed.explanation || '',
       sourceIds: validIds,
       confidence: parsed.confidence || 'low',
       suggestedQuestion: parsed.suggestedQuestion || '',
-      forMemberEmail: askForEmail,
-    };
-    askLoading = false; render();
+      forMemberEmail,
+      leadSaved: false,
+    }});
+    askLoading = false; askPending = ''; render();
+    const turnEl = document.getElementById('ask-turn-' + (askThread.length - 1));
+    if (turnEl) turnEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
   } catch(e){
-    askLoading = false;
+    askLoading = false; askPending = '';
+    // Put the question back so it can be retried, unless a new one was typed meanwhile.
+    if (!askQuestion.trim()) {
+      askQuestion = q;
+      const box = document.getElementById('ask-input');
+      if (box) box.value = q;
+    }
     askError = e.message || 'Could not get an answer.';
     render();
   }
@@ -5780,28 +5846,47 @@ function attachHandlers(){
   const askForEmailEl = document.getElementById('ask-for-email');
   if (askForEmailEl) askForEmailEl.onchange = () => { askForEmail = askForEmailEl.checked; };
 
+  const askInputEl = document.getElementById('ask-input');
+  if (askInputEl) {
+    // Keep the draft in state so a re-render (e.g. an answer arriving) doesn't wipe it.
+    askInputEl.oninput = () => { askQuestion = askInputEl.value; };
+    askInputEl.onkeydown = (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        if (!askLoading) runAsk();
+      }
+    };
+  }
+
   const clearAskBtn = document.querySelector('[data-clear-ask]');
   if (clearAskBtn) clearAskBtn.onclick = () => {
-    askResult = null; askError = ''; askQuestion = ''; leadAnswerText = ''; render();
+    if (askLoading) return;
+    askThread = []; askError = ''; askQuestion = ''; render();
+    document.getElementById('ask-input')?.focus();
   };
 
-  const copyAnswerBtn = document.querySelector('[data-copy-answer]');
-  if (copyAnswerBtn) copyAnswerBtn.onclick = () => {
-    navigator.clipboard.writeText(blocksToPlainText(askResult?.answer)).then(()=>showToast(askResult?.forMemberEmail ? 'Copied — ready to paste into your email' : 'Answer copied'));
-  };
+  document.querySelectorAll('[data-copy-answer]').forEach(btn => btn.onclick = () => {
+    const r = askThread[+btn.getAttribute('data-copy-answer')]?.result;
+    if (!r) return;
+    navigator.clipboard.writeText(blocksToPlainText(r.answer)).then(()=>showToast(r.forMemberEmail ? 'Copied — ready to paste into your email' : 'Answer copied'));
+  });
 
-  const copyLeadQBtn = document.querySelector('[data-copy-lead-question]');
-  if (copyLeadQBtn) copyLeadQBtn.onclick = () => {
-    navigator.clipboard.writeText(askResult?.suggestedQuestion || '').then(()=>showToast('Question copied'));
-  };
+  document.querySelectorAll('[data-copy-lead-question]').forEach(btn => btn.onclick = () => {
+    const r = askThread[+btn.getAttribute('data-copy-lead-question')]?.result;
+    navigator.clipboard.writeText(r?.suggestedQuestion || '').then(()=>showToast('Question copied'));
+  });
 
-  const saveLeadAnswerBtn = document.querySelector('[data-save-lead-answer]');
-  if (saveLeadAnswerBtn) saveLeadAnswerBtn.onmousedown = (e) => {
+  document.querySelectorAll('[data-save-lead-answer]').forEach(btn => btn.onmousedown = (e) => {
     e.preventDefault();
-    const el = document.getElementById('lead-answer');
+    const i = btn.getAttribute('data-save-lead-answer');
+    const turn = askThread[+i];
+    if (!turn) return;
+    const el = document.getElementById('lead-answer-' + i);
     const answer = (el ? el.value : '').trim();
     if (!answer) { showToast('Paste the answer first'); return; }
-    const q = askQuestion || 'Team lead answer';
+    // A follow-up like "and for a Silver?" means nothing on its own, so save the
+    // self-contained question written for the team lead when there is one.
+    const q = turn.result.suggestedQuestion || turn.question || 'Team lead answer';
     state.kb.push(Object.assign(blankArticle(), {
       id: uid('kb'),
       title: q.length > 90 ? q.slice(0,90) + '…' : q,
@@ -5814,11 +5899,10 @@ function attachHandlers(){
       createdDate: todayKey(),
       updatedDate: todayKey(),
     }));
-    leadAnswerText = '';
-    askResult = null; askQuestion = '';
+    turn.result.leadSaved = true;
     saveState(); render();
     showToast('Saved — the Assistant can use this next time');
-  };
+  });
 
   document.querySelectorAll('[data-goto-article]').forEach(el => el.onclick = () => {
     expandedArticleId = el.getAttribute('data-goto-article');
